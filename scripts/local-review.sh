@@ -2,10 +2,15 @@
 # local-review.sh — no-GitHub-Actions fallback: poll a repo for open PRs and run the
 # AI reviewer whenever a PR's head sha changes (new PR or new push). Advisory only.
 #
-# Usage:
-#   ANTHROPIC_API_KEY=... ./scripts/local-review.sh owner/name [interval_seconds]
+# Defaults to the claude-cli backend = your Claude subscription (Max), NO metered API key.
+# Requires `claude` (Claude Code) installed and logged in. Override with REVIEW_BACKEND=api.
 #
-# Requires: gh (authenticated), node 18+, ANTHROPIC_API_KEY.
+# Usage:
+#   ./scripts/local-review.sh owner/name [interval_seconds]            # subscription (default)
+#   REVIEW_BACKEND=api ANTHROPIC_API_KEY=... ./scripts/local-review.sh owner/name
+#
+# Requires: gh (authenticated), node 18+, and either `claude` CLI (default) or ANTHROPIC_API_KEY.
+export REVIEW_BACKEND="${REVIEW_BACKEND:-claude-cli}"
 # State (reviewed head sha per PR) is kept in .local-review-state so restarts don't re-review.
 set -euo pipefail
 

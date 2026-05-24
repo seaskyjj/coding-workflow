@@ -29,10 +29,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: AI review
-        run: node .coding-workflow/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+      - name: PR body check (warn-only)
+        run: node .coding-workflow/scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+      - name: AI review
+        # optional project-specific rules: commit .coding-workflow/reviewer-overlay.md in the product repo
+        run: node .coding-workflow/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+        env:
+          REVIEW_BACKEND: api
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          REVIEWER_OVERLAY: reviewer-overlay.md   # product-repo overlay if present (else auto-skip)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_LOG_PATH: pr_log.jsonl
+      - name: Upload pr_log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-log-${{ github.event.pull_request.number }}
+          path: pr_log.jsonl
+          if-no-files-found: ignore

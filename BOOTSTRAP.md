@@ -3,17 +3,18 @@
 ## 0. Host this repo
 Push `coding-workflow` to GitHub (e.g. `seaskyjj/coding-workflow`). Product repos reference it by name.
 
-## 1. Local smoke (no Actions yet)
-From the product repo (or anywhere with `gh` authed):
+## 1. Local smoke (no Actions, no metered API key — uses your Claude subscription)
+Requires `claude` (Claude Code) logged in with your Pro/Max plan, and `gh` authed.
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-export ANTHROPIC_MODEL=claude-sonnet-4-5      # or your preferred model id
-# review one existing PR:
-node /path/to/coding-workflow/scripts/ai-review.mjs --repo owner/name --pr 123
-# poll for new PRs (no-Actions fallback):
+# review one existing PR via subscription (claude-cli backend):
+node /path/to/coding-workflow/scripts/ai-review.mjs --backend claude-cli --repo owner/name --pr 123
+# poll for new PRs (defaults to claude-cli = subscription):
 /path/to/coding-workflow/scripts/local-review.sh owner/name 120
 ```
-This posts a review comment on the PR and appends a `pr_log.jsonl` line.
+To use the metered API instead (e.g. testing the CI path): `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
+This posts/updates one review comment on the PR and appends a `pr_log.jsonl` line.
+
+Optional project rules: drop a `reviewer-overlay.md` (or `.coding-workflow/reviewer-overlay.md`) in the product repo with repo-specific invariants — the reviewer appends it to the checklist automatically.
 
 ## 2. Turn on auto-review in the product repo (GitHub Actions)
 1. In the product repo settings → Secrets: add `ANTHROPIC_API_KEY` (and `CODING_WORKFLOW_TOKEN` if this repo is private). Optional repo variable `ANTHROPIC_MODEL`.

@@ -20,8 +20,17 @@ jobs:
       - name: AI review
         run: node scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
+          REVIEW_BACKEND: api                            # ephemeral CI runner -> metered API key
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}   # optional repo variable; script has a default
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # gh reads GH_TOKEN
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_LOG_PATH: pr_log.jsonl
           # REVIEW_FAIL_ON: request_changes   # uncomment to also fail the check on that verdict
+      - name: Upload pr_log artifact   # derived/regenerable; CI is ephemeral so keep a copy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-log-${{ github.event.pull_request.number }}
+          path: pr_log.jsonl
+          if-no-files-found: ignore

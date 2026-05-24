@@ -70,6 +70,30 @@ task card ──▶ implementer: branch + PR (one capability)
 
 Not a reason to split: "repo feels big", "lots of tests", "lots of docs". Splitting imposes cross-repo version-coordination cost — the worst tax on a small team.
 
-## 7. Honest limits
+## 7. Branch hygiene
+
+Branches are ephemeral work pointers — the durable record is PRs + git history + `pr_log`. Keep them from piling up:
+
+- **Delete on merge (the main lever).** Enable GitHub repo setting *"Automatically delete head branches"*. Then only *open* (in-flight) branches ever remain — a small set, not a growing pile. This solves proliferation far more than naming does.
+- **Prune locally.** Periodically: `git fetch --prune` (drop refs to deleted remote branches) and `git branch --merged main | grep -vE '^\*|main' | xargs -r git branch -d` (drop local merged branches).
+- **Name by change type** (conventional style), so the branches that *are* open are filterable and the process/tooling ones are distinguishable from product work:
+
+  | prefix | meaning | category |
+  | --- | --- | --- |
+  | `feat/` | product feature | functional |
+  | `fix/` | bug fix | functional |
+  | `refactor/` `perf/` | refactor / performance | functional |
+  | `test/` | tests only | functional |
+  | `ci/` `chore/` `build/` | CI / tooling / config | process |
+  | `docs/` | docs | process |
+
+  Add a task id when there is one: `feat/ST-P15-training-plan`, `ci/setup-workflows`. Filter examples:
+  ```bash
+  gh pr list --search "head:feat/ head:fix/"          # product work only
+  git branch -r | grep -vE 'origin/(ci|chore|docs)/'  # hide process branches
+  ```
+- A **warn-only branch-name check** is in `scripts/pr-body-check.mjs` (regex `^(feat|fix|refactor|perf|ci|chore|build|docs|test)/.+`, override via `BRANCH_PREFIX_PATTERN`). It annotates, it does not block (use `--strict` to block).
+
+## 8. Honest limits
 
 Two AIs reviewing each other reduces but does not eliminate **correlated blind spots** (shared training-induced gaps). That is exactly why the non-AI gate (Section 1) and invariant tests (Section 3) must exist independently of AI judgment. AI review raises the find-rate; tests + CI provide the guarantee.

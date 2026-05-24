@@ -30,7 +30,9 @@ const API_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 const CLI_MODEL = process.env.CLAUDE_CLI_MODEL; // optional; else CLI default
 const MAX_DIFF_CHARS = Number(process.env.MAX_DIFF_CHARS ?? 200000);
 const PR_LOG_PATH = process.env.PR_LOG_PATH ?? 'pr_log.jsonl';
-const MARKER = '<!-- ai-review -->';
+// reviewer-scoped marker so multiple AI reviewers (claude / codex) don't overwrite each other's comment.
+const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? 'default';
+const MARKER = `<!-- ai-review:${REVIEWER_ID} -->`;
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -45,9 +47,9 @@ function readSibling(rel) {
 function resolveOverlay() {
   const explicit = arg('--overlay') ?? process.env.REVIEWER_OVERLAY;
   if (explicit) return existsSync(explicit) ? readFileSync(explicit, 'utf8') : undefined;
-  for (const p of ['.coding-workflow/reviewer-overlay.md', 'reviewer-overlay.md']) {
-    if (existsSync(p)) return readFileSync(p, 'utf8');
-  }
+  // Product overlay lives at the product-repo root only. Do NOT search `.coding-workflow*`
+  // (that path is used to check out the tools repo in CI and would collide).
+  if (existsSync('reviewer-overlay.md')) return readFileSync('reviewer-overlay.md', 'utf8');
   return undefined;
 }
 
@@ -99,11 +101,15 @@ async function review() {
   if (!repo || !pr) throw new Error('need --repo owner/name and --pr N (or GITHUB_REPOSITORY/PR_NUMBER)');
 
   const meta = JSON.parse(gh(['pr', 'view', String(pr), '--repo', repo, '--json', 'title,body']));
-  let diff = gh(['pr', 'diff', String(pr), '--repo', repo]);
+  const fullDiff = gh(['pr', 'diff', String(pr), '--repo', repo]);
+  const fileHeaders = [...fullDiff.matchAll(/^diff --git a\/\S+ b\/(\S+)/gm)].map((m) => ({ path: m[1], index: m.index }));
+  let diff = fullDiff;
   let truncated = false;
-  if (diff.length > MAX_DIFF_CHARS) {
-    diff = diff.slice(0, MAX_DIFF_CHARS);
+  let omittedFiles = [];
+  if (fullDiff.length > MAX_DIFF_CHARS) {
     truncated = true;
+    diff = fullDiff.slice(0, MAX_DIFF_CHARS);
+    omittedFiles = fileHeaders.filter((f) => f.index >= MAX_DIFF_CHARS).map((f) => f.path);
   }
 
   let systemText = readSibling('../reviewer/CHECKLIST.md');
@@ -121,8 +127,11 @@ async function review() {
   // Truncation is a blocker: a partial diff must not yield an approval (#4).
   if (truncated && parsed) {
     parsed.verdict = 'needs_human';
+    const omitNote = omittedFiles.length
+      ? `NOT reviewed (omitted after the cut): ${omittedFiles.join(', ')}`
+      : 'one or more files were cut off';
     parsed.could_not_verify = [
-      `diff exceeded MAX_DIFF_CHARS (${MAX_DIFF_CHARS}); review covers only the first part — a human must review the full diff`,
+      `diff exceeded MAX_DIFF_CHARS (${MAX_DIFF_CHARS}) — review is PARTIAL; a human must review the full diff. ${omitNote}. The file straddling the cut may also be incomplete.`,
       ...(parsed.could_not_verify ?? []),
     ];
   }

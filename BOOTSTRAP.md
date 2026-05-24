@@ -14,7 +14,7 @@ node /path/to/coding-workflow/scripts/ai-review.mjs --backend claude-cli --repo 
 To use the metered API instead (e.g. testing the CI path): `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
 This posts/updates one review comment on the PR and appends a `pr_log.jsonl` line.
 
-Optional project rules: drop a `reviewer-overlay.md` (or `.coding-workflow/reviewer-overlay.md`) in the product repo with repo-specific invariants — the reviewer appends it to the checklist automatically.
+Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root** with repo-specific invariants — the reviewer appends it to the checklist automatically. (Do not put it under `.coding-workflow*`; that path is reserved for the tools checkout in CI.)
 
 ## 2. Turn on auto-review in the product repo (GitHub Actions)
 1. In the product repo settings → Secrets: add `ANTHROPIC_API_KEY` (and `CODING_WORKFLOW_TOKEN` if this repo is private). Optional repo variable `ANTHROPIC_MODEL`.

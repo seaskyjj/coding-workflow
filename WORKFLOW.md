@@ -5,7 +5,7 @@ This is the methodology. It is deliberately thin: every heavy control-plane conc
 ## 1. Roles (asymmetric review)
 
 - **Implementer** (e.g. codex): turns a task card into a branch + PR. Does one thing per PR.
-- **Reviewer** (e.g. Claude): independent review on the PR. Different agent than the implementer — never self-review for the security/policy lens.
+- **Reviewer** (e.g. Claude): independent review on the PR. Different agent than the implementer — never self-review for the security/policy lens. If you run **multiple** AI reviewers (e.g. Claude + Codex), give each a distinct `REVIEW_COMMENT_ID` so they upsert separate comments instead of overwriting each other.
 - **Non-AI gate** (CI): typecheck / test / lint / eval-gate / visual. Runs regardless of either AI's opinion. The real safety net.
 - **Human**: arbiter on disagreements, final merge, sign-off on security / irreversible / architectural changes.
 

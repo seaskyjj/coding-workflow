@@ -14,34 +14,36 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write          # PR comments go through the issues comments API
 
 jobs:
   review:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4            # product repo
-      - uses: actions/checkout@v4            # the reusable workflow tooling
+      - uses: actions/checkout@v4            # product repo (its root may hold reviewer-overlay.md)
+      - uses: actions/checkout@v4            # the reusable workflow tooling — separate path to avoid clobbering product files
         with:
           repository: seaskyjj/coding-workflow   # <-- set to your coding-workflow repo
-          path: .coding-workflow
+          path: .coding-workflow-tools
           # token: ${{ secrets.CODING_WORKFLOW_TOKEN }}   # uncomment if coding-workflow is private
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: PR body check (warn-only)
-        run: node .coding-workflow/scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+        run: node .coding-workflow-tools/scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
       - name: AI review
-        # optional project-specific rules: commit .coding-workflow/reviewer-overlay.md in the product repo
-        run: node .coding-workflow/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+        # optional project rules: commit reviewer-overlay.md at the PRODUCT repo root (auto-picked up)
+        run: node .coding-workflow-tools/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
           REVIEW_BACKEND: api
+          REVIEW_COMMENT_ID: claude        # distinct per reviewer so claude/codex don't overwrite each other
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
-          REVIEWER_OVERLAY: reviewer-overlay.md   # product-repo overlay if present (else auto-skip)
+          REVIEWER_OVERLAY: reviewer-overlay.md   # product-repo-root overlay if present (else auto-skip)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_LOG_PATH: pr_log.jsonl

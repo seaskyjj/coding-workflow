@@ -11,7 +11,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `WORKFLOW.md` | The methodology: PR sizing, finding→test rule, source-of-truth vs derived, CI gate, repo-management, three-party roles. Read this first. |
 | `reviewer/CHECKLIST.md` | The review lens — recurring bug classes (authz/tenant, contract drift, policy invariants, visual). What the AI reviewer is told to look for. |
 | `reviewer/review-prompt.md` | Prompt template fed to the AI reviewer (references CHECKLIST). |
-| `scripts/ai-review.mjs` | Self-contained reviewer: reads a PR diff, calls the Anthropic API with the checklist, posts a structured review comment, appends a `pr_log` record. |
+| `scripts/ai-review.mjs` | Self-contained reviewer: reads a PR diff, calls the **configured reviewer backend** (`claude-cli` subscription or `api`) with the checklist (+ optional project overlay), upserts one structured review comment, appends a `pr_log` record. |
 | `scripts/pr-log.mjs` | Generate/append `pr_log.jsonl` from GitHub (`gh`). Derived export — regenerable, never hand-maintained. |
 | `scripts/pr_log.schema.json` | Schema of one `pr_log.jsonl` record (for stats / validation). |
 | `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally. |

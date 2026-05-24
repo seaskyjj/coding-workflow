@@ -1,0 +1,29 @@
+# Drop into a PRODUCT repo as .github/workflows/ci.yml
+# The NON-AI gate — the real safety net. Runs independently of any AI judgment.
+# Adjust commands to the product (example below matches a Node monorepo like TrainOS).
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: typecheck
+        run: npm run typecheck --workspaces --if-present
+      - name: lint
+        run: npm run lint --workspaces --if-present
+      - name: test
+        run: npm test --workspaces --if-present
+      # - name: eval gate            # project-specific gates (e.g. TrainOS p0:eval:gate)
+      #   run: npm run p0:eval:gate
+      # - name: visual snapshots     # e.g. Playwright visual regression for C-end / gym at 3 widths
+      #   run: npm run test:visual

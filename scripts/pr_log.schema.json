@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "pr_log record",
+  "description": "One JSON object per line in pr_log.jsonl. DERIVED from GitHub (gh) — regenerable, never hand-edited.",
+  "type": "object",
+  "required": ["pr", "repo", "title", "head_sha", "state"],
+  "additionalProperties": true,
+  "properties": {
+    "pr": { "type": "integer", "description": "PR number" },
+    "repo": { "type": "string", "description": "owner/name" },
+    "title": { "type": "string" },
+    "task_id": { "type": ["string", "null"], "description": "linked task-card / ST / requirement id, parsed from PR body (e.g. ST-P8-11)" },
+    "head_sha": { "type": "string" },
+    "base": { "type": "string" },
+    "state": { "type": "string", "enum": ["open", "closed", "merged"] },
+    "author": { "type": "string" },
+    "created_at": { "type": "string" },
+    "merged_at": { "type": ["string", "null"] },
+    "files_changed": { "type": "integer" },
+    "additions": { "type": "integer" },
+    "deletions": { "type": "integer" },
+    "ci": {
+      "type": "object",
+      "description": "non-AI gate results keyed by check name",
+      "additionalProperties": { "type": "string" }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "verdict": { "type": "string", "enum": ["approve", "approve_after_fixes", "request_changes", "needs_human"] },
+        "summary": { "type": "string" },
+        "rounds": { "type": "integer", "description": "how many review iterations" },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["severity", "area", "issue"],
+            "properties": {
+              "severity": { "type": "string", "enum": ["high", "med", "low"] },
+              "area": { "type": "string", "enum": ["A_authz", "B_contract", "C_policy", "D_visual", "E_reliability", "other"] },
+              "location": { "type": "string" },
+              "issue": { "type": "string" },
+              "turned_into_test": { "type": ["string", "null"], "description": "path::testname of the regression test, or null if not yet" },
+              "status": { "type": "string", "enum": ["open", "fixed", "wontfix", "deferred"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

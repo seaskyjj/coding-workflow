@@ -1,0 +1,27 @@
+# This repo's own PR reviewer (also a working example of the consumer template).
+name: ai-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write   # to post the review comment
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: AI review
+        run: node scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}   # optional repo variable; script has a default
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # gh reads GH_TOKEN
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # REVIEW_FAIL_ON: request_changes   # uncomment to also fail the check on that verdict

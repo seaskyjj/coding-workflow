@@ -1,0 +1,5 @@
+node_modules/
+pr_log.jsonl
+.local-review-state
+.DS_Store
+*.log

@@ -1,0 +1,38 @@
+# Drop into a PRODUCT repo as .github/workflows/ai-review.yml
+# Auto-triggers the AI reviewer on every PR. The reviewer scripts live in the
+# separate `coding-workflow` repo, which this workflow checks out alongside.
+#
+# Prereqs in the product repo:
+#   - secret  ANTHROPIC_API_KEY
+#   - (if coding-workflow is private) secret CODING_WORKFLOW_TOKEN with repo read access
+#   - edit the `repository:` below to your coding-workflow location
+name: ai-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4            # product repo
+      - uses: actions/checkout@v4            # the reusable workflow tooling
+        with:
+          repository: seaskyjj/coding-workflow   # <-- set to your coding-workflow repo
+          path: .coding-workflow
+          # token: ${{ secrets.CODING_WORKFLOW_TOKEN }}   # uncomment if coding-workflow is private
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: AI review
+        run: node .coding-workflow/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}

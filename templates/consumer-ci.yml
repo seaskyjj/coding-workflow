@@ -1,29 +1,40 @@
 # Drop into a PRODUCT repo as .github/workflows/ci.yml
 # The NON-AI gate — the real safety net. Runs independently of any AI judgment.
-# Adjust commands to the product (example below matches a Node monorepo like TrainOS).
+# Tailor the commands to your repo's actual scripts. Comments flag the gotchas we hit in practice.
 name: ci
 on:
   pull_request:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true        # superseded PR pushes cancel stale runs (don't burn minutes)
+
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4   # swap for your toolchain (pnpm/yarn/python/go/...)
         with:
           node-version: '22'
           cache: 'npm'
+      # If tests shell out to system tools (ffmpeg, imagemagick, ...), install them here.
+      # CI runners may lack them — symptom is `spawn <tool> ENOENT`. Example:
+      # - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
+      # CROSS-PACKAGE MONOREPO NOTE: dependent packages often must be BUILT (emit dist) before
+      # typecheck/test can resolve them from a fresh install. Two safe patterns:
+      #   (a) if `npm test` already builds each package in dependency order, run it FIRST and
+      #       run typecheck AFTER (dist will exist) — what's shown below;
+      #   (b) otherwise add an explicit build step in dependency order before typecheck.
+      # Verify against your repo; a fresh `npm ci` has NO dist, unlike your local checkout.
+      - name: test
+        run: npm test
       - name: typecheck
         run: npm run typecheck --workspaces --if-present
       - name: lint
         run: npm run lint --workspaces --if-present
-      - name: test
-        run: npm test --workspaces --if-present
-      # - name: eval gate            # project-specific gates (e.g. TrainOS p0:eval:gate)
-      #   run: npm run p0:eval:gate
-      # - name: visual snapshots     # e.g. Playwright visual regression for C-end / gym at 3 widths
-      #   run: npm run test:visual
+      # - name: project gate (eval / visual / e2e) — enable when the data/tooling exists
+      #   run: npm run <your-gate>

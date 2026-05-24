@@ -1,15 +1,19 @@
 # Drop into a PRODUCT repo as .github/workflows/ai-review.yml
-# Auto-triggers the AI reviewer on every PR. The reviewer scripts live in the
-# separate `coding-workflow` repo, which this workflow checks out alongside.
-#
-# Prereqs in the product repo:
-#   - secret  ANTHROPIC_API_KEY
-#   - (if coding-workflow is private) secret CODING_WORKFLOW_TOKEN with repo read access
-#   - edit the `repository:` below to your coding-workflow location
+# Auto AI review on PRs, using the reusable coding-workflow reviewer (checked out alongside).
+# Degrades gracefully (job stays green) until two human prerequisites are met:
+#   1. the tooling repo is reachable — make seaskyjj/coding-workflow public, OR set
+#      CODING_WORKFLOW_TOKEN (the default GITHUB_TOKEN cannot read other repos);
+#   2. ANTHROPIC_API_KEY secret is set (enables the actual AI review step).
+# Once (1) holds the warn-only PR-body/branch check runs; once (1)+(2) hold the AI review runs.
+# Edit the `repository:` value to your coding-workflow location.
 name: ai-review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ai-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,22 +25,43 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4            # product repo (its root may hold reviewer-overlay.md)
-      - uses: actions/checkout@v4            # the reusable workflow tooling — separate path to avoid clobbering product files
+      - uses: actions/checkout@v4            # product repo (root may hold reviewer-overlay.md)
+      - name: Checkout reviewer tooling
+        id: tools
+        continue-on-error: true             # unreachable tooling -> skip rest, don't fail the PR
+        uses: actions/checkout@v4
         with:
           repository: seaskyjj/coding-workflow   # <-- set to your coding-workflow repo
           path: .coding-workflow-tools
           # token: ${{ secrets.CODING_WORKFLOW_TOKEN }}   # uncomment if coding-workflow is private
+      - name: Tooling unavailable notice
+        if: steps.tools.outcome != 'success'
+        run: echo "::notice::coding-workflow tooling not reachable (private without CODING_WORKFLOW_TOKEN?). Make it public or add the token. Skipping review."
       - uses: actions/setup-node@v4
+        if: steps.tools.outcome == 'success'
         with:
           node-version: '22'
-      - name: PR body check (warn-only)
+      - name: PR body + branch check (warn-only, no key needed)
+        if: steps.tools.outcome == 'success'
         run: node .coding-workflow-tools/scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+      - name: Check API key
+        id: key
+        if: steps.tools.outcome == 'success'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY not set — skipping AI review. Add the secret to enable."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: AI review
-        # optional project rules: commit reviewer-overlay.md at the PRODUCT repo root (auto-picked up)
+        if: steps.tools.outcome == 'success' && steps.key.outputs.enabled == 'true'
+        # project rules: commit reviewer-overlay.md at the PRODUCT repo root (auto-picked up)
         run: node .coding-workflow-tools/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
           REVIEW_BACKEND: api
@@ -48,7 +73,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_LOG_PATH: pr_log.jsonl
       - name: Upload pr_log artifact
-        if: always()
+        if: ${{ always() && steps.tools.outcome == 'success' && steps.key.outputs.enabled == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: pr-log-${{ github.event.pull_request.number }}

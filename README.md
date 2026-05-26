@@ -19,6 +19,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `templates/consumer-ai-review.yml` | Drop into a **product repo** `.github/workflows/` to get AI review on PRs. |
 | `templates/consumer-ci.yml` | The **non-AI gate** (typecheck/test/lint/eval) a product repo must run — the real safety net. |
 | `BOOTSTRAP.md` | How to adopt this in a new or existing product repo. |
+| `ADOPT-PROMPT.md` | Copy-paste prompt for asking an agent to adopt this workflow in another product repo. |
 
 ## Core principle (don't forget this)
 

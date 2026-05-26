@@ -6,10 +6,48 @@ Push `coding-workflow` to GitHub (e.g. `seaskyjj/coding-workflow`). Product repo
 ## 1. Local smoke (no Actions, no metered API key — uses your Claude subscription)
 Requires `claude` (Claude Code) logged in with your Pro/Max plan, and `gh` authed.
 ```bash
-# review one existing PR via subscription (claude-cli backend):
-node /path/to/coding-workflow/scripts/ai-review.mjs --backend claude-cli --repo owner/name --pr 123
-# poll for new PRs (defaults to claude-cli = subscription):
-/path/to/coding-workflow/scripts/local-review.sh owner/name 120
+# Review the current product-repo PR via subscription (claude-cli backend).
+# Run inside the product repo; override CODING_WORKFLOW if the tooling checkout
+# is not at $HOME/Programs/coding-workflow.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+PR="$(gh pr view --json number --jq .number 2>/dev/null || true)"
+CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
+AI_REVIEW_SCRIPT="$CODING_WORKFLOW/scripts/ai-review.mjs"
+
+if [ ! -f "$AI_REVIEW_SCRIPT" ]; then
+  echo "ai-review.mjs not found; skipping local Claude review. CODING_WORKFLOW=$CODING_WORKFLOW"
+elif [ -z "$REPO" ]; then
+  echo "No GitHub repo found for this checkout; skipping local Claude review."
+elif [ -z "$PR" ]; then
+  echo "No open PR found for the current branch; skipping local Claude review."
+elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_COMMENT_ID=claude-cli \
+  REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
+  PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
+  node "$AI_REVIEW_SCRIPT" --backend claude-cli --repo "$REPO" --pr "$PR"
+else
+  echo "claude CLI unavailable; rely on GitHub Action or manual review."
+fi
+
+# Poll for new PRs (defaults to claude-cli = subscription):
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
+LOCAL_REVIEW_SCRIPT="$CODING_WORKFLOW/scripts/local-review.sh"
+if [ ! -f "$LOCAL_REVIEW_SCRIPT" ]; then
+  echo "local-review.sh not found; skipping poller. CODING_WORKFLOW=$CODING_WORKFLOW"
+elif [ -z "$REPO" ]; then
+  echo "No GitHub repo found for this checkout; skipping poller."
+elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_COMMENT_ID=claude-cli \
+  REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
+  PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
+  LOCAL_REVIEW_STATE="${TMPDIR:-/tmp}/coding-workflow-local-review-state" \
+  "$LOCAL_REVIEW_SCRIPT" "$REPO" 120
+else
+  echo "claude CLI unavailable; skipping poller unless REVIEW_BACKEND=api is configured manually."
+fi
 ```
 To use the metered API instead (e.g. testing the CI path): `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
 This posts/updates one review comment on the PR and appends a `pr_log.jsonl` line.

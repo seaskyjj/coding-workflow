@@ -27,6 +27,8 @@ A reviewer finding that is a real bug must, **in the same PR**, become a regress
 
 Coverage % is not the goal (it measures executed lines, not asserted invariants). Prefer **invariant / property / negative tests** for the recurring classes (see `reviewer/CHECKLIST.md`) over more example tests.
 
+First-pass AI review should enumerate all substantiated checklist findings it can find, not just enough findings to justify the verdict. To keep the output reviewable, the prompt caps findings at **12 total**, ordered by severity and exploitability. Follow-up reviews should verify addressed findings and catch blockers or regressions; low-severity advisory findings under an `approve` verdict are useful signal, but they are not automatically merge blockers unless the product repo or human gate says so.
+
 ## 4. The loop
 
 ```

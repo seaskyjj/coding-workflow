@@ -29,6 +29,8 @@ Coverage % is not the goal (it measures executed lines, not asserted invariants)
 
 First-pass AI review should enumerate all substantiated checklist findings it can find, not just enough findings to justify the verdict. To keep the output reviewable, the prompt caps findings at **12 total**, ordered by severity and exploitability. Follow-up reviews should verify addressed findings and catch blockers or regressions; low-severity advisory findings under an `approve` verdict are useful signal, but they are not automatically merge blockers unless the product repo or human gate says so.
 
+Large PRs should still be reviewed through complete evidence, not a truncated combined diff. The reviewer runner therefore switches to file-batched patches when the combined PR diff exceeds `MAX_DIFF_CHARS`. A file with no GitHub API patch, or a single file patch that still exceeds the cap, forces `needs_human`; it may still be useful to review the other batches, but that partial review cannot approve the PR.
+
 ## 4. The loop
 
 ```

@@ -35,7 +35,28 @@ The reviewer has two backends so you don't have to pay metered API for everythin
 Practical split for a cost-conscious team:
 - **Non-AI gate (typecheck/test/lint/eval) needs NO key** and runs free in Actions — that's the real safety net.
 - **AI review locally via `claude-cli`** (subscription) while volume is low / you trigger it yourself.
-- Add the **metered API key only when you want fully-unattended CI review**. Cost is small: one ~400-line-diff review is a few cents (checklist is prompt-cached). Control it: only non-draft PRs, cap `MAX_DIFF_CHARS`, optionally a cheaper model for first pass.
+- Add the **metered API key only when you want fully-unattended CI review**. Cost is small: one ~400-line-diff review is a few cents (checklist is prompt-cached). Control it: only non-draft PRs, keep `MAX_DIFF_CHARS` bounded, optionally a cheaper model for first pass.
+
+## Large PR diff handling
+
+`scripts/ai-review.mjs` first tries the normal combined PR diff. If that diff exceeds `MAX_DIFF_CHARS` (default `200000`), it uses GitHub's PR files API and reviews file patches in batches under the same cap instead of approving a truncated diff. If a file has no API `patch` or a single file patch still exceeds the cap, the overall verdict is forced to `needs_human`; partial review must not yield `approve`.
+
+Dry-run the batching plan without calling an AI backend or posting a comment:
+
+```bash
+node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER --print-diff-plan
+```
+
+Inspect one file patch directly when a review reports an omitted or oversized file:
+
+```bash
+gh api repos/OWNER/REPO/pulls/PR_NUMBER/files --paginate \
+  --jq '.[] | select(.filename=="path/to/file.ts") | .patch'
+
+gh pr checkout PR_NUMBER --repo OWNER/REPO
+BASE_REF="${BASE_REF:-main}"
+git diff "origin/$BASE_REF...HEAD" -- "path/to/file.ts"
+```
 
 ## Two boundaries that must hold
 

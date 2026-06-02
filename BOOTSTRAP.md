@@ -52,6 +52,21 @@ fi
 To use the metered API instead (e.g. testing the CI path): `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
 This posts/updates one review comment on the PR and appends a `pr_log.jsonl` line.
 
+For a large PR, inspect how the reviewer will split the diff before spending a review call:
+```bash
+node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR" --print-diff-plan
+```
+
+If the plan or review says a file patch was omitted or oversized, inspect that file explicitly:
+```bash
+gh api "repos/$REPO/pulls/$PR/files" --paginate \
+  --jq '.[] | select(.filename=="path/to/file.ts") | .patch'
+
+gh pr checkout "$PR" --repo "$REPO"
+BASE_REF="$(gh pr view "$PR" --repo "$REPO" --json baseRefName --jq .baseRefName)"
+git diff "origin/$BASE_REF...HEAD" -- "path/to/file.ts"
+```
+
 Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root** with repo-specific invariants — the reviewer appends it to the checklist automatically. (Do not put it under `.coding-workflow*`; that path is reserved for the tools checkout in CI.)
 
 ## 2. Turn on auto-review in the product repo (GitHub Actions)

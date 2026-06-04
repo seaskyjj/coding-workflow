@@ -12,6 +12,8 @@
 # Requires: gh (authenticated), node 18+, and either `claude` CLI (default) or ANTHROPIC_API_KEY.
 export REVIEW_BACKEND="${REVIEW_BACKEND:-claude-cli}"
 # State (reviewed head sha per PR) is kept in .local-review-state so restarts don't re-review.
+# First seen head defaults to deep; later pushes default to confirm-fixes. Run gate explicitly
+# when a large feature point is ready for a deliverability check.
 set -euo pipefail
 
 REPO="${1:?usage: local-review.sh owner/name [interval_seconds]}"
@@ -30,7 +32,7 @@ while true; do
       mode="${REVIEW_MODE:-}"
       if [ -z "$mode" ]; then
         if grep -q "^${num}:" "$STATE_FILE"; then
-          mode="gate"
+          mode="confirm-fixes"
         else
           mode="deep"
         fi

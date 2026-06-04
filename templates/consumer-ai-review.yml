@@ -1,10 +1,10 @@
 # Drop into a PRODUCT repo as .github/workflows/ai-review.yml
-# Auto AI review on PRs, using the reusable coding-workflow reviewer (checked out alongside).
-# Degrades gracefully (job stays green) until two human prerequisites are met:
-#   1. the tooling repo is reachable — make seaskyjj/coding-workflow public, OR set
+# PR review workflow using the reusable coding-workflow tooling (checked out alongside).
+# Degrades gracefully (job stays green) until the tooling repo is reachable — make
+# seaskyjj/coding-workflow public, OR set
 #      CODING_WORKFLOW_TOKEN (the default GITHUB_TOKEN cannot read other repos);
-#   2. ANTHROPIC_API_KEY secret is set (enables the actual AI review step).
-# Once (1) holds the warn-only PR-body/branch check runs; once (1)+(2) hold the AI review runs.
+# GitHub Action API AI review is intentionally skipped by default. Run local
+# claude-cli review for deep/gate/confirm-fixes rounds.
 # Edit the `repository:` value to your coding-workflow location.
 name: ai-review
 on:
@@ -56,38 +56,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-      - name: Check API key
-        id: key
+      - name: API review skipped
         if: steps.tools.outcome == 'success'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::notice::ANTHROPIC_API_KEY not set — skipping AI review. Add the secret to enable."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: AI review
-        if: steps.tools.outcome == 'success' && steps.key.outputs.enabled == 'true'
-        # project rules: commit reviewer-overlay.md at the PRODUCT repo root (auto-picked up)
-        run: node .coding-workflow-tools/scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
-        env:
-          REVIEW_BACKEND: api
-          REVIEW_COMMENT_ID: claude        # distinct per reviewer so claude/codex don't overwrite each other
-          REVIEW_MODE: ${{ vars.REVIEW_MODE || 'deep' }}
-          REVIEW_PROFILE: ${{ contains(github.event.pull_request.labels.*.name, 'review:pilot-minimal') && 'pilot_minimal' || 'standard' }}
-          MAX_FINDINGS: ${{ vars.MAX_FINDINGS || '12' }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
-          REVIEWER_OVERLAY: reviewer-overlay.md   # product-repo-root overlay if present (else auto-skip)
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_LOG_PATH: pr_log.jsonl
-      - name: Upload pr_log artifact
-        if: ${{ always() && steps.tools.outcome == 'success' && steps.key.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-log-${{ github.event.pull_request.number }}
-          path: pr_log.jsonl
-          if-no-files-found: ignore
+        run: echo "::notice::GitHub Action API AI review is intentionally disabled. Run local claude-cli review for deep/gate/confirm-fixes rounds."

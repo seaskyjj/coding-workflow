@@ -31,7 +31,7 @@ const stateParsed = {
 };
 const stateBlock = renderReviewState(
   stateParsed,
-  { headRefName: 'head', baseRefName: 'base' },
+  { headRefName: 'head', baseRefName: 'base', headRefOid: 'abc1234567890' },
   diffPlan,
   undefined,
 );
@@ -39,6 +39,8 @@ assert.equal((stateBlock.match(/-->/g) ?? []).length, 1, 'state block must only 
 const parsedState = parseReviewStateFromComment(stateBlock);
 assert.equal(parsedState.findings[0].issue, stateParsed.findings[0].issue);
 assert.equal(parsedState.findings[0].status, 'open');
+assert.equal(parsedState.headSha, 'abc1234567890');
+assert.equal(parsedState.currentHead, 'abc1234567890');
 
 const legacyState = { version: 1, verdict: 'approve', findings: [] };
 const legacyBlock = `<!-- ai-review-state:default\n${JSON.stringify(legacyState)}\nai-review-state:end -->`;
@@ -91,15 +93,16 @@ assert.equal(
 assert.equal(shouldFailClosedWithoutPreviousReview('deep', undefined), false);
 assert.equal(shouldFailClosedWithoutPreviousReview('gate', undefined), true);
 assert.equal(shouldFailClosedWithoutPreviousReview('confirm-fixes', undefined), true);
+assert.equal(shouldFailClosedWithoutPreviousReview('gate', { verdict: 'approve_after_fixes', findings: [] }), true);
 assert.equal(
-  shouldFailClosedWithoutPreviousReview('gate', { verdict: 'approve_after_fixes', findings: [] }),
+  shouldFailClosedWithoutPreviousReview('gate', { verdict: 'approve_after_fixes', findings: [], headSha: 'abc123' }),
   false,
 );
 const missingPrevious = buildMissingPreviousReviewResult('confirm-fixes');
 assert.equal(missingPrevious.verdict, 'needs_human');
 assert.ok(
-  missingPrevious.could_not_verify.some((entry) => entry.includes('No previous review state')),
-  'follow-up review without previous state must explain why it needs a human',
+  missingPrevious.could_not_verify.some((entry) => entry.includes('No previous review state with headSha')),
+  'follow-up review without previous headSha state must explain why it needs a human',
 );
 
 console.log('ai-review self-tests passed.');

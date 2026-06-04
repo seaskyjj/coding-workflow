@@ -10,7 +10,7 @@ Rules:
 - Follow the supplied `REVIEW MODE` and `REVIEW PROFILE` instructions. They are part of the task, not commentary.
 - Only flag things you can substantiate from the diff (or that you can reason about with high confidence). Cite `file:line`.
 - In `deep` mode, return all substantiated checklist/overlay findings you can identify, not only the first few issues needed to justify the verdict.
-- In `gate` or `confirm-fixes` mode, do not restart a broad review. Focus on previous findings still open, blockers, regressions, and newly introduced high-value issues.
+- In `gate` or `confirm-fixes` mode, do not restart a broad review. Use the previous findings plus the incremental diff scope supplied by the runner; `confirm-fixes` may also include targeted current-file context around previous finding locations.
 - Respect the supplied finding cap, ordered by severity and exploitability. If more findings exist, include the highest-value findings and mention the cap in `could_not_verify`.
 - For each real-bug finding, propose **the regression test that would catch it**, not just a fix.
 - Distinguish what the diff shows from what you cannot verify (visual rendering, full-suite runs, runtime behavior). Say so explicitly.

@@ -29,16 +29,17 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { buildPrRecord, appendRecord } from './pr-log.mjs';
 
 const API_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 const CLI_MODEL = process.env.CLAUDE_CLI_MODEL; // optional; else CLI default
 const REVIEW_MODE = normalizeReviewMode(arg('--review-mode') ?? process.env.REVIEW_MODE ?? 'deep');
 const REVIEW_PROFILE = normalizeReviewProfile(arg('--review-profile') ?? process.env.REVIEW_PROFILE ?? 'standard');
-const MAX_DIFF_CHARS = Number(process.env.MAX_DIFF_CHARS ?? 200000);
-const MAX_FINDINGS = Number(process.env.MAX_FINDINGS ?? defaultMaxFindings(REVIEW_MODE, REVIEW_PROFILE));
+const MAX_DIFF_CHARS = parsePositiveInteger(process.env.MAX_DIFF_CHARS, 200000);
+const MAX_FINDINGS = parsePositiveInteger(process.env.MAX_FINDINGS, defaultMaxFindings(REVIEW_MODE, REVIEW_PROFILE));
 const REVIEW_SYNTHESIS_ENABLED = process.env.REVIEW_SYNTHESIS !== '0' && REVIEW_MODE === 'deep';
-const SYNTHESIS_PATCH_CHARS = Number(process.env.SYNTHESIS_PATCH_CHARS ?? Math.min(120000, Math.floor(MAX_DIFF_CHARS * 0.6)));
+const SYNTHESIS_PATCH_CHARS = parsePositiveInteger(process.env.SYNTHESIS_PATCH_CHARS, Math.min(120000, Math.floor(MAX_DIFF_CHARS * 0.6)));
 const PR_LOG_PATH = process.env.PR_LOG_PATH ?? 'pr_log.jsonl';
 // reviewer-scoped marker so multiple AI reviewers (claude / codex) don't overwrite each other's comment.
 const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? 'default';
@@ -66,6 +67,12 @@ function normalizeReviewProfile(value) {
 function defaultMaxFindings(reviewMode, reviewProfile) {
   if (reviewProfile === 'pilot_minimal') return 5;
   return reviewMode === 'deep' ? 12 : 5;
+}
+function parsePositiveInteger(value, fallback) {
+  const normalizedFallback = Math.max(1, Math.floor(Number(fallback) || 1));
+  if (value == null || String(value).trim() === '') return normalizedFallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : normalizedFallback;
 }
 function gh(args, opts = {}) {
   return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
@@ -151,8 +158,15 @@ function parseReviewStateFromComment(body) {
   if (start < 0 || end < 0) return undefined;
   const jsonStart = body.indexOf('\n', start);
   if (jsonStart < 0 || jsonStart >= end) return undefined;
+  const payload = body.slice(jsonStart, end).trim();
   try {
-    return JSON.parse(body.slice(jsonStart, end).trim());
+    return JSON.parse(payload);
+  } catch {
+    // New comments base64-encode the JSON so attacker/diff-derived text cannot
+    // terminate the surrounding HTML comment with "-->".
+  }
+  try {
+    return JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
   } catch {
     return undefined;
   }
@@ -233,10 +247,8 @@ async function review() {
   upsertComment(repo, pr, comment);
 
   const record = buildPrRecord(repo, pr);
-  record.review = parsed
-    ? { verdict: parsed.verdict, summary: parsed.summary, rounds: reviewResults.length, backend, overlay: overlay != null, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
-        findings: (parsed.findings ?? []).map((f) => ({ severity: f.severity, area: f.area, location: f.location, issue: f.issue, turned_into_test: null, status: 'open' })) }
-    : { verdict: 'needs_human', summary: 'review output not machine-parseable', rounds: 1, backend, overlay: overlay != null, mode: REVIEW_MODE, profile: REVIEW_PROFILE, findings: [] };
+  record.review = { verdict: parsed.verdict, summary: parsed.summary, rounds: reviewResults.length, backend, overlay: overlay != null, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
+    findings: (parsed.findings ?? []).map((f) => ({ severity: f.severity, area: f.area, location: f.location, issue: f.issue, turned_into_test: null, status: 'open' })) };
   appendRecord(PR_LOG_PATH, record);
 
   const verdict = parsed?.verdict ?? 'needs_human';
@@ -502,11 +514,13 @@ function parseReviewOrNeedsHuman(text, batch) {
 
 function mergeReviewResults(reviewResults, diffPlan) {
   const parsedResults = reviewResults.map((r) => r.parsed);
-  const findings = parsedResults
-    .flatMap((p) => p.findings ?? [])
+  const mergedFindings = dedupeFindings(parsedResults.flatMap((p) => p.findings ?? []))
     .sort((a, b) => findingRank(b) - findingRank(a))
-    .slice(0, MAX_FINDINGS);
+  const findings = mergedFindings.slice(0, MAX_FINDINGS);
   const couldNotVerify = parsedResults.flatMap((p) => p.could_not_verify ?? []);
+  if (mergedFindings.length > MAX_FINDINGS) {
+    couldNotVerify.push(`${mergedFindings.length - MAX_FINDINGS} finding(s) exceeded MAX_FINDINGS=${MAX_FINDINGS}; lower-ranked findings were omitted from the rendered comment.`);
+  }
 
   if (diffPlan.mode === 'file-batches') {
     couldNotVerify.unshift(
@@ -535,6 +549,23 @@ function mergeReviewResults(reviewResults, diffPlan) {
     findings,
     could_not_verify: uniqueStrings(couldNotVerify),
   };
+}
+
+function dedupeFindings(findings) {
+  const byKey = new Map();
+  for (const finding of findings) {
+    const key = findingKey(finding);
+    const existing = byKey.get(key);
+    if (!existing || findingRank(finding) > findingRank(existing)) {
+      byKey.set(key, finding);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function findingKey(finding) {
+  const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return [normalize(finding.area), normalize(finding.location), normalize(finding.issue)].join('|');
 }
 
 function strongestVerdict(verdicts) {
@@ -592,9 +623,6 @@ function parseReview(text) {
 function renderComment(parsed, rawText, diffPlan, hasOverlay, backend, meta, previousReview) {
   const state = parsed ? renderReviewState(parsed, meta, diffPlan, previousReview) : '';
   const foot = `\n\n---\n_Advisory (${backend}${hasOverlay ? ' + project overlay' : ''}; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}). The non-AI CI gate is the safety net. Each real-bug finding should become a regression test in this PR._`;
-  if (!parsed) {
-    return `${MARKER}\n${state}\n## 🤖 AI review — needs human (unparseable output)\n${diffPlan.partial ? '> ⚠️ diff review was partial\n\n' : ''}\n${rawText}${foot}`;
-  }
   const sev = { high: '🔴', med: '🟡', low: '⚪' };
   const lines = [
     MARKER,
@@ -645,7 +673,18 @@ function renderReviewState(parsed, meta, diffPlan, previousReview) {
     previousReviewSource: previousReview?.source,
     updatedAt: new Date().toISOString(),
   };
-  return `${STATE_BEGIN}\n${JSON.stringify(state)}\n${STATE_END}`;
+  return `${STATE_BEGIN}\n${Buffer.from(JSON.stringify(state), 'utf8').toString('base64')}\n${STATE_END}`;
 }
 
-review().catch((err) => { console.error(err.message ?? err); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  review().catch((err) => { console.error(err.message ?? err); process.exit(1); });
+}
+
+export {
+  defaultMaxFindings,
+  dedupeFindings,
+  mergeReviewResults,
+  parsePositiveInteger,
+  parseReviewStateFromComment,
+  renderReviewState,
+};

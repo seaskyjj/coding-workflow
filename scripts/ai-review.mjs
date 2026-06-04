@@ -51,6 +51,7 @@ const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? 
 const MARKER = `<!-- ai-review:${REVIEWER_ID} -->`;
 const STATE_BEGIN = `<!-- ai-review-state:${REVIEWER_ID}`;
 const STATE_END = `ai-review-state:end -->`;
+const TRUSTED_COMMENT_AUTHOR = process.env.REVIEW_COMMENT_AUTHOR ?? getAuthenticatedLogin();
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -81,6 +82,13 @@ function parsePositiveInteger(value, fallback) {
 }
 function gh(args, opts = {}) {
   return execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
+}
+function getAuthenticatedLogin() {
+  try {
+    return gh(['api', 'user', '--jq', '.login']).trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 function ghJson(method, endpoint, payload) {
   return gh(['api', '-X', method, endpoint, '--input', '-'], { input: JSON.stringify(payload) });
@@ -133,7 +141,15 @@ function listIssueComments(repo, pr) {
   return comments;
 }
 function findExistingReviewComment(repo, pr) {
-  return listIssueComments(repo, pr).find((c) => typeof c.body === 'string' && c.body.includes(MARKER));
+  return findReviewCommentInList(listIssueComments(repo, pr));
+}
+function findReviewCommentInList(comments, trustedAuthor = TRUSTED_COMMENT_AUTHOR) {
+  return comments.find((c) => isTrustedReviewComment(c, trustedAuthor));
+}
+function isTrustedReviewComment(comment, trustedAuthor = TRUSTED_COMMENT_AUTHOR) {
+  if (typeof comment?.body !== 'string' || !comment.body.includes(MARKER)) return false;
+  if (!trustedAuthor) return false;
+  return comment.user?.login === trustedAuthor;
 }
 function upsertComment(repo, pr, body) {
   const existing = findExistingReviewComment(repo, pr);
@@ -147,7 +163,7 @@ function upsertComment(repo, pr, body) {
 function loadPreviousReviewContext(repo, pr) {
   const commentState = parseReviewStateFromComment(findExistingReviewComment(repo, pr)?.body);
   const logState = readLatestReviewStateFromLog(repo, pr);
-  if (commentState) {
+  if (commentState && !commentState.failedClosed) {
     return {
       source: commentState.headSha ? 'existing PR review comment' : 'existing PR review comment + PR_LOG_PATH headSha fallback',
       ...commentState,
@@ -188,6 +204,7 @@ function readLatestReviewStateFromLog(repo, pr) {
     try {
       const record = JSON.parse(lines[i]);
       if (String(record.repo) === String(repo) && String(record.pr) === String(pr) && record.review) {
+        if (record.review.failedClosed) continue;
         return {
           version: 1,
           verdict: record.review.verdict,
@@ -229,7 +246,7 @@ async function review() {
   if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
 
   if (shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)) {
-    const parsed = buildMissingPreviousReviewResult(REVIEW_MODE);
+    const parsed = attachReviewMetadata(buildMissingPreviousReviewResult(REVIEW_MODE), diffPlan, meta);
     const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
     upsertComment(repo, pr, comment);
     appendReviewRecord(repo, pr, parsed, 0, backend, overlay != null);
@@ -264,7 +281,7 @@ async function review() {
       },
     });
   }
-  const parsed = mergeReviewResults(reviewResults, diffPlan);
+  const parsed = attachReviewMetadata(mergeReviewResults(reviewResults, diffPlan), diffPlan, meta);
 
   const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
   upsertComment(repo, pr, comment);
@@ -278,13 +295,23 @@ async function review() {
 
 function appendReviewRecord(repo, pr, parsed, rounds, backend, hasOverlay) {
   const record = buildPrRecord(repo, pr);
+  record.head_sha = parsed.reviewedHeadSha ?? record.head_sha;
   record.review = { verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
+    failedClosed: parsed.failedClosed === true,
+    reviewedHeadSha: parsed.reviewedHeadSha ?? record.head_sha,
+    previousReviewedHead: parsed.previousReviewedHead ?? null,
     findings: (parsed.findings ?? []).map((f) => ({ severity: f.severity, area: f.area, location: f.location, issue: f.issue, turned_into_test: null, status: 'open' })) };
   appendRecord(PR_LOG_PATH, record);
 }
 
+function attachReviewMetadata(parsed, diffPlan, meta) {
+  parsed.reviewedHeadSha = diffPlan.currentHeadSha ?? meta.headRefOid;
+  parsed.previousReviewedHead = diffPlan.previousHeadSha;
+  return parsed;
+}
+
 function shouldFailClosedWithoutPreviousReview(reviewMode, previousReview) {
-  return (reviewMode === 'gate' || reviewMode === 'confirm-fixes') && (!previousReview || !previousReview.headSha);
+  return (reviewMode === 'gate' || reviewMode === 'confirm-fixes') && (!previousReview || previousReview.failedClosed || !previousReview.headSha);
 }
 
 function buildMissingPreviousReviewResult(reviewMode) {
@@ -292,6 +319,7 @@ function buildMissingPreviousReviewResult(reviewMode) {
     verdict: 'needs_human',
     summary: `REVIEW_MODE=${reviewMode} requires previous review state with headSha, but no usable prior AI review state was found in the living PR comment or PR_LOG_PATH. Run a deep review first or restore the prior review state before using focused follow-up mode.`,
     findings: [],
+    failedClosed: true,
     could_not_verify: [
       `No previous review state with headSha was available for REVIEW_MODE=${reviewMode}; focused follow-up review cannot safely build an incremental diff or confirm fixes.`,
     ],
@@ -482,7 +510,7 @@ function buildFilePatchDiffPlan(files, opts) {
         label: opts.incremental
           ? `incremental diff ${shortSha(opts.previousHeadSha)}...${shortSha(opts.currentHeadSha)}`
           : 'full PR file patches',
-        paths: normalizedFiles.map(({ file }) => file.filename).filter(Boolean),
+        paths: normalizedFiles.filter(({ fileDiff }) => fileDiff).map(({ file }) => file.filename).filter(Boolean),
         diff,
         chars: diff.length,
       }],
@@ -632,6 +660,8 @@ function parseFindingLocation(location) {
   if (!value) return undefined;
   const match = value.match(/^(.+?):(\d+)(?:\D|$)/);
   if (match) return { path: match[1], line: Number(match[2]) };
+  const symbolMatch = value.match(/^(.+\.[A-Za-z0-9]+):[^\s]+/);
+  if (symbolMatch) return { path: symbolMatch[1], line: undefined };
   const pathOnly = value.split(/\s+/)[0];
   return pathOnly ? { path: pathOnly, line: undefined } : undefined;
 }
@@ -944,7 +974,7 @@ function parseReview(text) {
 }
 
 function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousReview) {
-  const state = parsed ? renderReviewState(parsed, meta, diffPlan, previousReview) : '';
+  const state = parsed && !parsed.failedClosed ? renderReviewState(parsed, meta, diffPlan, previousReview) : '';
   const foot = `\n\n---\n_Advisory (${backend}${hasOverlay ? ' + project overlay' : ''}; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}). The non-AI CI gate is the safety net. Each real-bug finding should become a regression test in this PR._`;
   const sev = { high: '🔴', med: '🟡', low: '⚪' };
   const scopeLine = diffPlan.incremental
@@ -1014,11 +1044,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export {
   defaultMaxFindings,
   dedupeFindings,
+  findReviewCommentInList,
   mergeReviewResults,
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
   buildMissingPreviousReviewResult,
+  buildFilePatchDiffPlan,
   shouldRunSynthesis,
   shouldFailClosedWithoutPreviousReview,
   REVIEW_MODE,

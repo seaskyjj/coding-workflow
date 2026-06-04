@@ -15,7 +15,7 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    - if any test shells out to system tools (e.g. ffmpeg), install them in the job (symptom: `spawn <tool> ENOENT`);
    - leave eval/visual/e2e gates commented unless they actually exist and can pass.
 
-2. .github/workflows/ai-review.yml — copy templates/consumer-ai-review.yml; set `repository:` to the tooling repo; keep the graceful-degrade guards, concurrency, REVIEW_COMMENT_ID, and REVIEWER_OVERLAY as-is.
+2. .github/workflows/ai-review.yml — copy templates/consumer-ai-review.yml; set `repository:` to the tooling repo; keep the graceful-degrade guards and concurrency as-is. The default Action intentionally skips metered API AI review; local `claude-cli` remains the default AI review path.
 
 3. reviewer-overlay.md at the repo ROOT — write PROJECT-SPECIFIC review rules for THIS codebase (do NOT copy another project's overlay). Derive them from this repo's real invariants: read its ADRs/requirements/docs and the code, and encode the bug classes that would actually hurt here (authz/tenant boundaries, user-visible vs internal data, fail-closed rules, contract/snapshot sync, provenance, dev-only-not-in-prod, visual/responsive). Keep it tight; each rule should be checkable with `file:line` + a test.
 
@@ -35,12 +35,15 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    elif [ -z "$PR" ]; then
      echo "No open PR found for the current branch; skipping local Claude review."
    elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+     REVIEW_MODE="${REVIEW_MODE:-deep}" \
+     REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
+     MAX_FINDINGS="${MAX_FINDINGS:-12}" \
      REVIEW_COMMENT_ID=claude-cli \
      REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
      PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
      node "$AI_REVIEW_SCRIPT" --backend claude-cli --repo "$REPO" --pr "$PR"
    else
-     echo "claude CLI unavailable; rely on GitHub Action or manual review."
+     echo "claude CLI unavailable; rely on manual review."
    fi
    ```
 
@@ -53,13 +56,13 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
 
 6. Verify and report:
    - the ci gate must pass on the PR (fix real failures it surfaces — that's the point; turn any fix into a test where applicable);
-   - the ai-review job should run and skip gracefully (green) if the tooling repo or API key isn't configured yet.
+   - the ai-review job should run its no-key checks and skip API AI review gracefully (green).
    - if local `claude` CLI is available and logged in, run the local review command from step 4 once after opening the PR; if it is unavailable, report that explicitly instead of fabricating review status.
 
 FINALLY, tell the human the prerequisites only THEY can do (you cannot): 
    (a) enable the repo setting "Automatically delete head branches"; 
-   (b) add secret ANTHROPIC_API_KEY (and CODING_WORKFLOW_TOKEN if the tooling repo is private, or make it public); 
-   (c) optional repo variable ANTHROPIC_MODEL.
+   (b) add CODING_WORKFLOW_TOKEN if the tooling repo is private, or make it public;
+   (c) only add ANTHROPIC_API_KEY / ANTHROPIC_MODEL later if the team explicitly opts back into metered API AI review.
 
 Boundaries: do not embed/vendor the tooling; do not implement auto-merge; do not write secrets into the repo; do not fabricate passing status or data; the non-AI gate is the real safety net and must run independently of any AI.
 ````

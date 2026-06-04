@@ -22,15 +22,20 @@ elif [ -z "$REPO" ]; then
 elif [ -z "$PR" ]; then
   echo "No open PR found for the current branch; skipping local Claude review."
 elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_MODE="${REVIEW_MODE:-deep}" \
+  REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
+  MAX_FINDINGS="${MAX_FINDINGS:-12}" \
   REVIEW_COMMENT_ID=claude-cli \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
   node "$AI_REVIEW_SCRIPT" --backend claude-cli --repo "$REPO" --pr "$PR"
 else
-  echo "claude CLI unavailable; rely on GitHub Action or manual review."
+  echo "claude CLI unavailable; rely on manual review plus the non-AI gate."
 fi
 
-# Poll for new PRs (defaults to claude-cli = subscription):
+# Poll for new PRs (defaults to claude-cli = subscription). Without an explicit
+# REVIEW_MODE override, the poller uses deep for the first seen head of a PR and
+# confirm-fixes for later pushes to the same PR.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
 CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
@@ -40,6 +45,7 @@ if [ ! -f "$LOCAL_REVIEW_SCRIPT" ]; then
 elif [ -z "$REPO" ]; then
   echo "No GitHub repo found for this checkout; skipping poller."
 elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
   REVIEW_COMMENT_ID=claude-cli \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
@@ -49,16 +55,53 @@ else
   echo "claude CLI unavailable; skipping poller unless REVIEW_BACKEND=api is configured manually."
 fi
 ```
-To use the metered API instead (e.g. testing the CI path): `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
+To use the metered API instead for an explicit manual run: `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
 This posts/updates one review comment on the PR and appends a `pr_log.jsonl` line.
+
+For a large PR, inspect how the reviewer will split the diff before spending a review call:
+```bash
+node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR" --print-diff-plan
+```
+
+Use explicit review modes to control review cost:
+```bash
+# First pass: broad checklist/overlay discovery, capped at 10-12 findings.
+REVIEW_MODE=deep MAX_FINDINGS=12 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Development/fix loop: verify previous findings against the incremental diff.
+REVIEW_MODE=confirm-fixes MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Large feature deliverable check: blockers, regressions and high-value risks.
+REVIEW_MODE=gate MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Final merge/release candidate: run broad discovery again.
+REVIEW_MODE=deep MAX_FINDINGS=12 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Temporary pilot validation: keep the safety floor, skip production-polish hunting.
+REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+```
+
+For `gate` and `confirm-fixes`, the reviewer uses the previous review state's `headSha` and reviews only `previousReviewedHead...currentHead` plus previous findings. `confirm-fixes` also includes bounded current-file context around previous finding locations. If no previous `headSha` exists, these modes fail closed with `needs_human`.
+
+For GitHub Actions, the template intentionally skips metered API review by default. Request `pilot_minimal` with the PR label `review:pilot-minimal` as documentation of intent, but do not set it as a repository-wide default.
+
+If the plan or review says a file patch was omitted or oversized, inspect that file explicitly:
+```bash
+gh api "repos/$REPO/pulls/$PR/files" --paginate \
+  --jq '.[] | select(.filename=="path/to/file.ts") | .patch'
+
+gh pr checkout "$PR" --repo "$REPO"
+BASE_REF="$(gh pr view "$PR" --repo "$REPO" --json baseRefName --jq .baseRefName)"
+git diff "origin/$BASE_REF...HEAD" -- "path/to/file.ts"
+```
 
 Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root** with repo-specific invariants — the reviewer appends it to the checklist automatically. (Do not put it under `.coding-workflow*`; that path is reserved for the tools checkout in CI.)
 
 ## 2. Turn on auto-review in the product repo (GitHub Actions)
-1. In the product repo settings → Secrets: add `ANTHROPIC_API_KEY` (and `CODING_WORKFLOW_TOKEN` if this repo is private). Optional repo variable `ANTHROPIC_MODEL`.
+1. If `coding-workflow` is private, add `CODING_WORKFLOW_TOKEN`; no Anthropic API key is required for the default Action.
 2. Copy `templates/consumer-ai-review.yml` → product `.github/workflows/ai-review.yml`; set the `repository:` field to your coding-workflow location.
 3. Copy `templates/consumer-ci.yml` → product `.github/workflows/ci.yml`; adjust commands (typecheck/lint/test + project gates like eval / visual).
-4. Open a PR — the AI reviewer comments automatically; CI runs the non-AI gate.
+4. Open a PR — GitHub Actions run the no-key workflow checks and non-AI gate. Run local `claude-cli` review for the deep / confirm-fixes / gate AI rounds.
 
 ## 3. Operating rules (see WORKFLOW.md)
 - One capability per PR; leave `main` green; revertable.

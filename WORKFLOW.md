@@ -27,6 +27,18 @@ A reviewer finding that is a real bug must, **in the same PR**, become a regress
 
 Coverage % is not the goal (it measures executed lines, not asserted invariants). Prefer **invariant / property / negative tests** for the recurring classes (see `reviewer/CHECKLIST.md`) over more example tests.
 
+First-pass AI review should use `REVIEW_MODE=deep`: enumerate all substantiated checklist findings it can find, not just enough findings to justify the verdict. To keep the output reviewable, cap findings at **10-12 total** (default 12), ordered by severity and exploitability.
+
+Development and review-fix loops should use `REVIEW_MODE=confirm-fixes` after the first deep review: verify the previous findings/fix claims, blockers introduced in the touched fix area, and newly obvious high-value issues in that same area. A large feature point that is ready to be treated as deliverable should use `REVIEW_MODE=gate`: verify previous findings, blockers, regressions, and cross-cutting high-value risks without restarting every low advisory hunt. Final merge / release candidates should run `REVIEW_MODE=deep` again.
+
+For `gate` and `confirm-fixes`, the runner must use the previous review state's `headSha` and review only the incremental diff from `previousReviewedHead...currentHead` plus previous findings. `confirm-fixes` may include bounded current-file context around previous finding locations so fixes can be checked without sending the whole PR diff again. If the runner cannot find previous review state with `headSha` in the living PR comment or `PR_LOG_PATH`, these focused modes must fail closed with `needs_human` instead of approving an empty confirmation or silently falling back to full diff. Low-severity advisory findings under an `approve` verdict are useful signal, but they are not automatically merge blockers unless the product repo or human gate says so.
+
+Large PRs should still be reviewed through complete evidence, not a truncated combined diff. The reviewer runner therefore switches to file-batched patches when the combined PR diff exceeds `MAX_DIFF_CHARS`. Critical files (HTTP handlers, authz/session/tenant/RLS/policy, migrations, DB/store/repository code and source files) are ordered before tests and docs. In deep mode, file-batched reviews run a bounded synthesis pass over batch summaries and critical patches to recover cross-file/global invariant reasoning. A file with no GitHub API patch, or a single file patch that still exceeds the cap, forces `needs_human`; it may still be useful to review the other batches, but that partial review cannot approve the PR.
+
+Temporary or pilot-only work can use `REVIEW_PROFILE=pilot_minimal` to keep review fast. In GitHub Actions this should be a per-PR signal, such as the `review:pilot-minimal` label used by the template, not a sticky repository variable. That profile does not waive the safety floor: auth/tenant/secret/PII boundaries, fail-closed behavior, obvious runtime breakage, minimum tests, and honest "implemented / partial / not production" labeling still matter. It only deprioritizes production-scale hardening and low-value polish until the pilot graduates.
+
+GitHub Actions should run the non-AI gate and lightweight workflow checks by default. Metered API AI review is intentionally disabled in the templates until a repo explicitly opts back in; local `claude-cli` review is the default AI review path while cost and cadence are being tuned.
+
 ## 4. The loop
 
 ```

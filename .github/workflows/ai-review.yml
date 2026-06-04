@@ -1,4 +1,5 @@
-# This repo's own PR reviewer (also a working example of the consumer template).
+# This repo's own PR review workflow (also a working example of the consumer template).
+# It runs no-key checks and intentionally skips metered API AI review by default.
 name: ai-review
 on:
   pull_request:
@@ -18,38 +19,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Reviewer self-test
+        run: node scripts/ai-review-self-test.mjs
       - name: PR body + branch check (warn-only, no key needed)
         run: node scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-      - name: Check API key
-        id: key
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::notice::ANTHROPIC_API_KEY not set — skipping AI review. Add the secret to enable."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: AI review
-        if: steps.key.outputs.enabled == 'true'
-        run: node scripts/ai-review.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
-        env:
-          REVIEW_BACKEND: api                            # ephemeral CI runner -> metered API key
-          REVIEW_COMMENT_ID: claude
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}   # optional repo variable; script has a default
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}          # gh reads GH_TOKEN
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_LOG_PATH: pr_log.jsonl
-          # REVIEW_FAIL_ON: request_changes   # uncomment to also fail the check on that verdict
-      - name: Upload pr_log artifact   # derived/regenerable; CI is ephemeral so keep a copy
-        if: ${{ always() && steps.key.outputs.enabled == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-log-${{ github.event.pull_request.number }}
-          path: pr_log.jsonl
-          if-no-files-found: ignore
+      - name: API review skipped
+        run: echo "::notice::GitHub Action API AI review is intentionally disabled. Run local claude-cli review for deep/gate/confirm-fixes rounds."

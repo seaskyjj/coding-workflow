@@ -27,8 +27,25 @@ while true; do
     [ -z "${num:-}" ] && continue
     key="${num}:${sha}"
     if ! grep -qx "$key" "$STATE_FILE"; then
-      echo "[$(date +%H:%M:%S)] reviewing PR #${num} @ ${sha:0:7}"
-      if node "$HERE/ai-review.mjs" --repo "$REPO" --pr "$num"; then
+      mode="${REVIEW_MODE:-}"
+      if [ -z "$mode" ]; then
+        if grep -q "^${num}:" "$STATE_FILE"; then
+          mode="gate"
+        else
+          mode="deep"
+        fi
+      fi
+      profile="${REVIEW_PROFILE:-standard}"
+      findings="${MAX_FINDINGS:-}"
+      if [ -z "$findings" ]; then
+        if [ "$mode" = "deep" ] && [ "$profile" != "pilot_minimal" ]; then
+          findings="12"
+        else
+          findings="5"
+        fi
+      fi
+      echo "[$(date +%H:%M:%S)] reviewing PR #${num} @ ${sha:0:7} (${mode}/${profile}, max findings ${findings})"
+      if REVIEW_MODE="$mode" REVIEW_PROFILE="$profile" MAX_FINDINGS="$findings" node "$HERE/ai-review.mjs" --repo "$REPO" --pr "$num"; then
         echo "$key" >> "$STATE_FILE"
       else
         echo "  review failed for #${num}; will retry next cycle"

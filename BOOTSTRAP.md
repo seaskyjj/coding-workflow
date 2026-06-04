@@ -22,6 +22,9 @@ elif [ -z "$REPO" ]; then
 elif [ -z "$PR" ]; then
   echo "No open PR found for the current branch; skipping local Claude review."
 elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_MODE="${REVIEW_MODE:-deep}" \
+  REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
+  MAX_FINDINGS="${MAX_FINDINGS:-12}" \
   REVIEW_COMMENT_ID=claude-cli \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
@@ -30,7 +33,9 @@ else
   echo "claude CLI unavailable; rely on GitHub Action or manual review."
 fi
 
-# Poll for new PRs (defaults to claude-cli = subscription):
+# Poll for new PRs (defaults to claude-cli = subscription). Without an explicit
+# REVIEW_MODE override, the poller uses deep for the first seen head of a PR and
+# gate for later pushes to the same PR.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
 CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
@@ -40,6 +45,7 @@ if [ ! -f "$LOCAL_REVIEW_SCRIPT" ]; then
 elif [ -z "$REPO" ]; then
   echo "No GitHub repo found for this checkout; skipping poller."
 elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
   REVIEW_COMMENT_ID=claude-cli \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
@@ -55,6 +61,18 @@ This posts/updates one review comment on the PR and appends a `pr_log.jsonl` lin
 For a large PR, inspect how the reviewer will split the diff before spending a review call:
 ```bash
 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR" --print-diff-plan
+```
+
+Use explicit review modes to control review cost:
+```bash
+# First pass: broad checklist/overlay discovery, capped at 10-12 findings.
+REVIEW_MODE=deep MAX_FINDINGS=12 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Follow-up: previous fixes, blockers, regressions and newly introduced high-value issues.
+REVIEW_MODE=gate MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Temporary pilot validation: keep the safety floor, skip production-polish hunting.
+REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
 ```
 
 If the plan or review says a file patch was omitted or oversized, inspect that file explicitly:

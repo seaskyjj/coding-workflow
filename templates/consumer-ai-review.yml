@@ -66,6 +66,9 @@ jobs:
         env:
           REVIEW_BACKEND: api
           REVIEW_COMMENT_ID: claude        # distinct per reviewer so claude/codex don't overwrite each other
+          REVIEW_MODE: ${{ vars.REVIEW_MODE || 'deep' }}
+          REVIEW_PROFILE: ${{ vars.REVIEW_PROFILE || 'standard' }}
+          MAX_FINDINGS: ${{ vars.MAX_FINDINGS || '12' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           REVIEWER_OVERLAY: reviewer-overlay.md   # product-repo-root overlay if present (else auto-skip)

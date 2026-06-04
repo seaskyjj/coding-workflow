@@ -35,6 +35,9 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    elif [ -z "$PR" ]; then
      echo "No open PR found for the current branch; skipping local Claude review."
    elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+     REVIEW_MODE="${REVIEW_MODE:-deep}" \
+     REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
+     MAX_FINDINGS="${MAX_FINDINGS:-12}" \
      REVIEW_COMMENT_ID=claude-cli \
      REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
      PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \

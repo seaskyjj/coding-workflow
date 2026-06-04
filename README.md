@@ -14,7 +14,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `scripts/ai-review.mjs` | Self-contained reviewer: reads a PR diff, calls the **configured reviewer backend** (`claude-cli` subscription or `api`) with the checklist (+ optional project overlay), upserts one structured review comment, appends a `pr_log` record. |
 | `scripts/pr-log.mjs` | Generate/append `pr_log.jsonl` from GitHub (`gh`). Derived export — regenerable, never hand-maintained. |
 | `scripts/pr_log.schema.json` | Schema of one `pr_log.jsonl` record (for stats / validation). |
-| `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally. |
+| `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally; defaults to `deep` for first seen PR heads and `gate` for later pushes to the same PR. |
 | `.github/workflows/ai-review.yml` | This repo's own PR review workflow (also serves as a working example). |
 | `templates/consumer-ai-review.yml` | Drop into a **product repo** `.github/workflows/` to get AI review on PRs. |
 | `templates/consumer-ci.yml` | The **non-AI gate** (typecheck/test/lint/eval) a product repo must run — the real safety net. |
@@ -39,7 +39,11 @@ Practical split for a cost-conscious team:
 
 ## Large PR diff handling
 
-`scripts/ai-review.mjs` first tries the normal combined PR diff. If that diff exceeds `MAX_DIFF_CHARS` (default `200000`), it uses GitHub's PR files API and reviews file patches in batches under the same cap instead of approving a truncated diff. If a file has no API `patch` or a single file patch still exceeds the cap, the overall verdict is forced to `needs_human`; partial review must not yield `approve`.
+`scripts/ai-review.mjs` first tries the normal combined PR diff. If that diff exceeds `MAX_DIFF_CHARS` (default `200000`), it uses GitHub's PR files API and reviews file patches in batches under the same cap instead of approving a truncated diff. File batching is not GitHub-order greedy anymore: security / policy / HTTP handler / auth / RLS / migration / source files are reviewed before tests and docs so the highest-value paths land in the earliest batches.
+
+In `REVIEW_MODE=deep`, large file-batched PRs also run a bounded **cross-batch synthesis pass** over the batch summaries plus critical file patches. This pass is meant to catch cross-file/global invariant issues that per-batch context can miss. It does not run in `gate` / `confirm-fixes` mode by default, because follow-up reviews should be cheaper and focused.
+
+If a file has no API `patch` or a single file patch still exceeds the cap, the overall verdict is forced to `needs_human`; partial review must not yield `approve`.
 
 Dry-run the batching plan without calling an AI backend or posting a comment:
 
@@ -57,6 +61,32 @@ gh pr checkout PR_NUMBER --repo OWNER/REPO
 BASE_REF="${BASE_REF:-main}"
 git diff "origin/$BASE_REF...HEAD" -- "path/to/file.ts"
 ```
+
+## Review modes and profiles
+
+Use review mode to keep first-pass discovery and follow-up confirmation from becoming the same expensive operation:
+
+```bash
+# First review after opening a PR: broad but capped discovery.
+REVIEW_MODE=deep MAX_FINDINGS=12 node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+
+# Follow-up after fixes: blockers, regressions, previous findings still open.
+REVIEW_MODE=gate MAX_FINDINGS=5 node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+
+# Strictly confirm the previous findings/fixes; do not re-review the whole PR.
+REVIEW_MODE=confirm-fixes MAX_FINDINGS=5 node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+```
+
+`gate` and `confirm-fixes` read the previous review state from the living PR comment first, then from `PR_LOG_PATH` if available. This turns follow-up review into an explicit tool behavior instead of relying on the operator to ignore fresh low advisory findings.
+
+Use `REVIEW_PROFILE=pilot_minimal` for temporary/pilot paths where the goal is a fast usable validation, not production hardening:
+
+```bash
+REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 \
+  node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+```
+
+`pilot_minimal` still checks the safety floor: main path can run, obvious crashes/races/resource leaks, auth/tenant boundaries, secret/PII/live URL leakage, fail-closed behavior, minimum tests, and honest implemented/partial/not-production labeling. It deprioritizes long-term architecture polish, product-scale concurrency/lifecycle, and low-value ergonomics.
 
 ## Two boundaries that must hold
 

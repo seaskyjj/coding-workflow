@@ -2,11 +2,13 @@
 import assert from 'node:assert/strict';
 import {
   MAX_FINDINGS,
+  buildMissingPreviousReviewResult,
   mergeReviewResults,
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
   shouldRunSynthesis,
+  shouldFailClosedWithoutPreviousReview,
 } from './ai-review.mjs';
 
 const diffPlan = {
@@ -84,6 +86,20 @@ assert.equal(
   shouldRunSynthesis(overCapSynthesisPlan, [{ parsed: { verdict: 'approve', findings: [] } }]),
   false,
   'synthesis should not run when every critical patch exceeds the synthesis patch cap',
+);
+
+assert.equal(shouldFailClosedWithoutPreviousReview('deep', undefined), false);
+assert.equal(shouldFailClosedWithoutPreviousReview('gate', undefined), true);
+assert.equal(shouldFailClosedWithoutPreviousReview('confirm-fixes', undefined), true);
+assert.equal(
+  shouldFailClosedWithoutPreviousReview('gate', { verdict: 'approve_after_fixes', findings: [] }),
+  false,
+);
+const missingPrevious = buildMissingPreviousReviewResult('confirm-fixes');
+assert.equal(missingPrevious.verdict, 'needs_human');
+assert.ok(
+  missingPrevious.could_not_verify.some((entry) => entry.includes('No previous review state')),
+  'follow-up review without previous state must explain why it needs a human',
 );
 
 console.log('ai-review self-tests passed.');

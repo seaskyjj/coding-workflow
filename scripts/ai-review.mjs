@@ -214,6 +214,16 @@ async function review() {
   const overlay = resolveOverlay();
   if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
 
+  if (shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)) {
+    const parsed = buildMissingPreviousReviewResult(REVIEW_MODE);
+    const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
+    upsertComment(repo, pr, comment);
+    appendReviewRecord(repo, pr, parsed, 0, backend, overlay != null);
+    console.error(`[${backend}] verdict: ${parsed.verdict} (0 findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}; missing previous review state) -> ${repo}#${pr}`);
+    if (process.env.REVIEW_FAIL_ON && parsed.verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
+    return;
+  }
+
   const promptTemplate = readSibling('../reviewer/review-prompt.md');
   const reviewResults = [];
   for (const batch of diffPlan.batches) {
@@ -245,14 +255,33 @@ async function review() {
   const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
   upsertComment(repo, pr, comment);
 
-  const record = buildPrRecord(repo, pr);
-  record.review = { verdict: parsed.verdict, summary: parsed.summary, rounds: reviewResults.length, backend, overlay: overlay != null, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
-    findings: (parsed.findings ?? []).map((f) => ({ severity: f.severity, area: f.area, location: f.location, issue: f.issue, turned_into_test: null, status: 'open' })) };
-  appendRecord(PR_LOG_PATH, record);
+  appendReviewRecord(repo, pr, parsed, reviewResults.length, backend, overlay != null);
 
   const verdict = parsed?.verdict ?? 'needs_human';
   console.error(`[${backend}] verdict: ${verdict} (${parsed?.findings?.length ?? '?'} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})${diffPlan.mode === 'file-batches' ? ` [${diffPlan.batches.length} file batch(es)]` : ''}${diffPlan.partial ? ' [PARTIAL→needs_human]' : ''} -> ${repo}#${pr}`);
   if (process.env.REVIEW_FAIL_ON && verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
+}
+
+function appendReviewRecord(repo, pr, parsed, rounds, backend, hasOverlay) {
+  const record = buildPrRecord(repo, pr);
+  record.review = { verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
+    findings: (parsed.findings ?? []).map((f) => ({ severity: f.severity, area: f.area, location: f.location, issue: f.issue, turned_into_test: null, status: 'open' })) };
+  appendRecord(PR_LOG_PATH, record);
+}
+
+function shouldFailClosedWithoutPreviousReview(reviewMode, previousReview) {
+  return (reviewMode === 'gate' || reviewMode === 'confirm-fixes') && previousReview == null;
+}
+
+function buildMissingPreviousReviewResult(reviewMode) {
+  return {
+    verdict: 'needs_human',
+    summary: `REVIEW_MODE=${reviewMode} requires previous review state, but no prior AI review state was found in the living PR comment or PR_LOG_PATH. Run a deep review first or restore the prior review comment before using focused follow-up mode.`,
+    findings: [],
+    could_not_verify: [
+      `No previous review state was available for REVIEW_MODE=${reviewMode}; focused follow-up review cannot safely confirm fixes or blockers.`,
+    ],
+  };
 }
 
 function buildDiffPlan(repo, pr, meta) {
@@ -686,7 +715,9 @@ export {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  buildMissingPreviousReviewResult,
   shouldRunSynthesis,
+  shouldFailClosedWithoutPreviousReview,
   REVIEW_MODE,
   REVIEW_PROFILE,
   MAX_FINDINGS,

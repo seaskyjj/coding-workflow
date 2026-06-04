@@ -77,7 +77,7 @@ REVIEW_MODE=gate MAX_FINDINGS=5 node scripts/ai-review.mjs --repo OWNER/REPO --p
 REVIEW_MODE=confirm-fixes MAX_FINDINGS=5 node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
 ```
 
-`gate` and `confirm-fixes` read the previous review state from the living PR comment first, then from `PR_LOG_PATH` if available. This turns follow-up review into an explicit tool behavior instead of relying on the operator to ignore fresh low advisory findings.
+`gate` and `confirm-fixes` read the previous review state from the living PR comment first, then from `PR_LOG_PATH` if available. This turns follow-up review into an explicit tool behavior instead of relying on the operator to ignore fresh low advisory findings. If no previous review state is available, these focused follow-up modes fail closed with `needs_human`; run `deep` first or restore the prior review comment before using them.
 
 Use `REVIEW_PROFILE=pilot_minimal` for temporary/pilot paths where the goal is a fast usable validation, not production hardening:
 

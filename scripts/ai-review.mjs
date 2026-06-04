@@ -243,7 +243,7 @@ async function review() {
   }
   const parsed = mergeReviewResults(reviewResults, diffPlan);
 
-  const comment = renderComment(parsed, reviewResults.map((r) => r.rawText).join('\n\n--- batch output ---\n\n'), diffPlan, overlay != null, backend, meta, previousReview);
+  const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
   upsertComment(repo, pr, comment);
 
   const record = buildPrRecord(repo, pr);
@@ -620,7 +620,7 @@ function parseReview(text) {
   try { return JSON.parse(candidate); } catch { return undefined; }
 }
 
-function renderComment(parsed, rawText, diffPlan, hasOverlay, backend, meta, previousReview) {
+function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousReview) {
   const state = parsed ? renderReviewState(parsed, meta, diffPlan, previousReview) : '';
   const foot = `\n\n---\n_Advisory (${backend}${hasOverlay ? ' + project overlay' : ''}; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}). The non-AI CI gate is the safety net. Each real-bug finding should become a regression test in this PR._`;
   const sev = { high: '🔴', med: '🟡', low: '⚪' };

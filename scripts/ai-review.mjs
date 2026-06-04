@@ -232,7 +232,6 @@ async function review() {
   if (reviewResults.length === 0) {
     reviewResults.push({
       batch: { label: 'no reviewable file patches', paths: [], diff: '' },
-      rawText: '',
       parsed: {
         verdict: 'needs_human',
         summary: 'No reviewable file patches were available from the PR files API.',

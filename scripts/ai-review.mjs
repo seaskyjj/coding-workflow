@@ -434,7 +434,7 @@ function shouldRunSynthesis(diffPlan, reviewResults) {
     diffPlan.mode === 'file-batches' &&
     diffPlan.batches.length > 1 &&
     reviewResults.length > 0 &&
-    diffPlan.criticalPatches?.length > 0;
+    selectSynthesisPatches(diffPlan).length > 0;
 }
 
 function buildSynthesisBatch(diffPlan) {
@@ -686,6 +686,7 @@ export {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  shouldRunSynthesis,
   REVIEW_MODE,
   REVIEW_PROFILE,
   MAX_FINDINGS,

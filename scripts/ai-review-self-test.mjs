@@ -6,6 +6,7 @@ import {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  shouldRunSynthesis,
 } from './ai-review.mjs';
 
 const diffPlan = {
@@ -71,6 +72,18 @@ assert.equal(capped.findings.length, MAX_FINDINGS);
 assert.ok(
   capped.could_not_verify.some((entry) => entry.includes(`exceeded MAX_FINDINGS=${MAX_FINDINGS}`)),
   'runner-level finding truncation must be visible in could_not_verify',
+);
+
+const overCapSynthesisPlan = {
+  ...diffPlan,
+  mode: 'file-batches',
+  batches: [{ label: 'batch 1' }, { label: 'batch 2' }],
+  criticalPatches: [{ path: 'server.ts', priority: 0, chars: Number.MAX_SAFE_INTEGER, diff: 'too large' }],
+};
+assert.equal(
+  shouldRunSynthesis(overCapSynthesisPlan, [{ parsed: { verdict: 'approve', findings: [] } }]),
+  false,
+  'synthesis should not run when every critical patch exceeds the synthesis patch cap',
 );
 
 console.log('ai-review self-tests passed.');

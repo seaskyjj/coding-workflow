@@ -75,6 +75,8 @@ REVIEW_MODE=gate MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$P
 REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
 ```
 
+For GitHub Actions, request `pilot_minimal` with the PR label `review:pilot-minimal`; do not set it as a repository-wide default.
+
 If the plan or review says a file patch was omitted or oversized, inspect that file explicitly:
 ```bash
 gh api "repos/$REPO/pulls/$PR/files" --paginate \

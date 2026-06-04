@@ -43,7 +43,7 @@ jobs:
           REVIEW_BACKEND: api                            # ephemeral CI runner -> metered API key
           REVIEW_COMMENT_ID: claude
           REVIEW_MODE: ${{ vars.REVIEW_MODE || 'deep' }}
-          REVIEW_PROFILE: ${{ vars.REVIEW_PROFILE || 'standard' }}
+          REVIEW_PROFILE: ${{ contains(github.event.pull_request.labels.*.name, 'review:pilot-minimal') && 'pilot_minimal' || 'standard' }}
           MAX_FINDINGS: ${{ vars.MAX_FINDINGS || '12' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}   # optional repo variable; script has a default

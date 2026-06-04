@@ -88,6 +88,8 @@ REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 \
 
 `pilot_minimal` still checks the safety floor: main path can run, obvious crashes/races/resource leaks, auth/tenant boundaries, secret/PII/live URL leakage, fail-closed behavior, minimum tests, and honest implemented/partial/not-production labeling. It deprioritizes long-term architecture polish, product-scale concurrency/lifecycle, and low-value ergonomics.
 
+For GitHub Actions, the consumer template uses the PR label `review:pilot-minimal` to request that profile on a single PR. Do not set `REVIEW_PROFILE` as a sticky repository variable; that silently downgrades all future reviews.
+
 ## Two boundaries that must hold
 
 - **AI review is additive; the non-AI gate is the safety net.** typecheck/test/lint/eval-gate run independently of any AI judgment. If the AI reviewer misses something, the gate still stands.

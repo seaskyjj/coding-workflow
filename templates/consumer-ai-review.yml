@@ -41,6 +41,15 @@ jobs:
         if: steps.tools.outcome == 'success'
         with:
           node-version: '22'
+      - name: Reviewer mode contract check
+        if: steps.tools.outcome == 'success'
+        run: |
+          for token in REVIEW_MODE REVIEW_PROFILE MAX_FINDINGS; do
+            if ! grep -q "$token" .coding-workflow-tools/scripts/ai-review.mjs; then
+              echo "::error::coding-workflow ai-review.mjs does not support $token; update the tooling checkout before relying on staged review modes."
+              exit 1
+            fi
+          done
       - name: PR body + branch check (warn-only, no key needed)
         if: steps.tools.outcome == 'success'
         run: node .coding-workflow-tools/scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
@@ -67,7 +76,7 @@ jobs:
           REVIEW_BACKEND: api
           REVIEW_COMMENT_ID: claude        # distinct per reviewer so claude/codex don't overwrite each other
           REVIEW_MODE: ${{ vars.REVIEW_MODE || 'deep' }}
-          REVIEW_PROFILE: ${{ vars.REVIEW_PROFILE || 'standard' }}
+          REVIEW_PROFILE: ${{ contains(github.event.pull_request.labels.*.name, 'review:pilot-minimal') && 'pilot_minimal' || 'standard' }}
           MAX_FINDINGS: ${{ vars.MAX_FINDINGS || '12' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}

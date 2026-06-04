@@ -219,14 +219,14 @@ async function review() {
   for (const batch of diffPlan.batches) {
     const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, previousReview);
     const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
-    reviewResults.push({ batch, rawText, parsed: parseReviewOrNeedsHuman(rawText, batch) });
+    reviewResults.push({ batch, parsed: parseReviewOrNeedsHuman(rawText, batch) });
   }
 
   if (shouldRunSynthesis(diffPlan, reviewResults)) {
     const batch = buildSynthesisBatch(diffPlan);
     const userText = buildSynthesisUserText(promptTemplate, meta, batch, diffPlan, reviewResults, previousReview);
     const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
-    reviewResults.push({ batch, rawText, parsed: parseReviewOrNeedsHuman(rawText, batch) });
+    reviewResults.push({ batch, parsed: parseReviewOrNeedsHuman(rawText, batch) });
   }
 
   if (reviewResults.length === 0) {
@@ -687,4 +687,7 @@ export {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  REVIEW_MODE,
+  REVIEW_PROFILE,
+  MAX_FINDINGS,
 };

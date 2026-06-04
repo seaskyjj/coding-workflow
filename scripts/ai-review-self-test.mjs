@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import {
+  MAX_FINDINGS,
   mergeReviewResults,
   parsePositiveInteger,
   parseReviewStateFromComment,
@@ -57,7 +58,7 @@ const deduped = mergeReviewResults([
 ], diffPlan);
 assert.equal(deduped.findings.length, 1, 'duplicate synthesis findings should not consume multiple finding slots');
 
-const manyFindings = Array.from({ length: 13 }, (_, index) => ({
+const manyFindings = Array.from({ length: MAX_FINDINGS + 1 }, (_, index) => ({
   severity: 'low',
   area: 'E_reliability',
   location: `file.ts:${index}`,
@@ -66,9 +67,9 @@ const manyFindings = Array.from({ length: 13 }, (_, index) => ({
 const capped = mergeReviewResults([
   { batch: { label: 'batch 1' }, parsed: { verdict: 'approve_after_fixes', summary: 'many', findings: manyFindings } },
 ], diffPlan);
-assert.equal(capped.findings.length, 12);
+assert.equal(capped.findings.length, MAX_FINDINGS);
 assert.ok(
-  capped.could_not_verify.some((entry) => entry.includes('exceeded MAX_FINDINGS=12')),
+  capped.could_not_verify.some((entry) => entry.includes(`exceeded MAX_FINDINGS=${MAX_FINDINGS}`)),
   'runner-level finding truncation must be visible in could_not_verify',
 );
 

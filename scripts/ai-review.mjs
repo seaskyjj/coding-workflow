@@ -51,7 +51,7 @@ const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? 
 const MARKER = `<!-- ai-review:${REVIEWER_ID} -->`;
 const STATE_BEGIN = `<!-- ai-review-state:${REVIEWER_ID}`;
 const STATE_END = `ai-review-state:end -->`;
-const TRUSTED_COMMENT_AUTHOR = process.env.REVIEW_COMMENT_AUTHOR ?? getAuthenticatedLogin();
+const TRUSTED_COMMENT_AUTHOR = resolveTrustedCommentAuthor();
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -89,6 +89,13 @@ function getAuthenticatedLogin() {
   } catch {
     return undefined;
   }
+}
+function resolveTrustedCommentAuthor({
+  explicit = process.env.REVIEW_COMMENT_AUTHOR,
+  authenticatedLogin = getAuthenticatedLogin(),
+  isActions = process.env.GITHUB_ACTIONS === 'true',
+} = {}) {
+  return explicit || authenticatedLogin || (isActions ? 'github-actions[bot]' : undefined);
 }
 function ghJson(method, endpoint, payload) {
   return gh(['api', '-X', method, endpoint, '--input', '-'], { input: JSON.stringify(payload) });
@@ -1049,6 +1056,7 @@ export {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  resolveTrustedCommentAuthor,
   buildMissingPreviousReviewResult,
   buildFilePatchDiffPlan,
   shouldRunSynthesis,

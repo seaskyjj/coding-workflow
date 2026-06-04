@@ -9,6 +9,7 @@ import {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  resolveTrustedCommentAuthor,
   shouldRunSynthesis,
   shouldFailClosedWithoutPreviousReview,
 } from './ai-review.mjs';
@@ -53,6 +54,10 @@ const trustedComment = { body: '<!-- ai-review:default --> trusted', user: { log
 assert.equal(findReviewCommentInList([forgedComment, trustedComment], 'reviewer'), trustedComment);
 assert.equal(findReviewCommentInList([forgedComment], 'reviewer'), undefined);
 assert.equal(findReviewCommentInList([trustedComment], undefined), undefined);
+assert.equal(resolveTrustedCommentAuthor({ explicit: 'configured', authenticatedLogin: 'ignored', isActions: true }), 'configured');
+assert.equal(resolveTrustedCommentAuthor({ explicit: undefined, authenticatedLogin: 'local-user', isActions: true }), 'local-user');
+assert.equal(resolveTrustedCommentAuthor({ explicit: undefined, authenticatedLogin: null, isActions: true }), 'github-actions[bot]');
+assert.equal(resolveTrustedCommentAuthor({ explicit: undefined, authenticatedLogin: null, isActions: false }), undefined);
 
 assert.equal(parsePositiveInteger('', 12), 12);
 assert.equal(parsePositiveInteger('abc', 12), 12);

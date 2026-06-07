@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ai-review reviewer output",
-  "description": "Final-message shape the codex-cli backend is constrained to via `codex exec --output-schema`. Mirrors the JSON contract in reviewer/review-prompt.md and reviewer/proposal-review-prompt.md. `area` is left a free string because the allowed values differ by REVIEW_KIND (code: A_authz/B_contract/... ; proposal: R1_argument/R2_rootcause_fix/...).",
+  "description": "Final-message shape the codex-cli backend is constrained to via `codex exec --output-schema`. Mirrors the JSON contract in reviewer/review-prompt.md and reviewer/proposal-review-prompt.md. `area` enumerates BOTH the code-review areas (A_*..E_*/other) and the proposal-review lenses (R1_*..R8_*) so one schema serves both REVIEW_KINDs; the kind's prompt tells the model which subset to use. This enum is kept in sync with scripts/pr_log.schema.json so a schema-valid Codex finding never violates the pr_log area enum when logged.",
   "type": "object",
   "additionalProperties": false,
   "required": ["verdict", "summary", "findings", "could_not_verify"],
@@ -21,7 +21,7 @@
         "required": ["severity", "area", "location", "issue", "why", "fix", "test"],
         "properties": {
           "severity": { "type": "string", "enum": ["high", "med", "low"] },
-          "area": { "type": "string" },
+          "area": { "type": "string", "enum": ["A_authz", "B_contract", "C_policy", "D_visual", "E_reliability", "other", "R1_argument", "R2_rootcause_fix", "R3_disconfirm", "R4_alternatives", "R5_metric_gaming", "R6_domain", "R7_scope", "R8_honesty"] },
           "location": { "type": "string" },
           "issue": { "type": "string" },
           "why": { "type": "string" },

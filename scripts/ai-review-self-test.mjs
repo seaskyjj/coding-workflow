@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   buildFilePatchDiffPlan,
   MAX_FINDINGS,
@@ -14,12 +15,16 @@ import {
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
+  resolveCodexOutputSchema,
   resolveTrustedCommentAuthor,
   reviewStateMatchesKind,
+  reviewStateMatchesReviewer,
   REVIEW_KIND,
   shouldRunSynthesis,
   shouldFailClosedWithoutPreviousReview,
 } from './ai-review.mjs';
+
+const readJson = (rel) => JSON.parse(readFileSync(new URL(rel, import.meta.url), 'utf8'));
 
 const diffPlan = {
   mode: 'full-diff',
@@ -80,6 +85,40 @@ assert.equal(defaultReviewerId('code', 'claude-cli'), 'default');
 assert.equal(defaultReviewerId('code', 'codex-cli'), 'codex');
 assert.equal(defaultReviewerId('proposal', 'api'), 'proposal');
 assert.equal(defaultReviewerId('proposal', 'codex-cli'), 'codex-proposal');
+
+// --- Codex review findings on PR #4, encoded as regression tests ---------------------------------
+
+// Finding 1 (B_contract): every backend normalizeBackend() accepts must be a legal pr_log review.backend,
+// or a successful review appends a pr_log row that violates the schema.
+const prLogSchema = readJson('./pr_log.schema.json');
+const prLogBackendEnum = prLogSchema.properties.review.properties.backend.enum;
+for (const backend of ['api', 'claude-cli', 'codex-cli']) {
+  assert.ok(prLogBackendEnum.includes(backend), `pr_log.schema.json review.backend enum must include ${backend}`);
+}
+
+// Finding 2 (B_contract): the codex --output-schema area enum must stay in sync with the pr_log area enum,
+// so a schema-valid Codex finding can never violate pr_log's stricter area enum when logged.
+const reviewerOutputSchema = readJson('./reviewer-output.schema.json');
+const reviewerAreaEnum = reviewerOutputSchema.properties.findings.items.properties.area.enum;
+const prLogAreaEnum = prLogSchema.properties.review.properties.findings.items.properties.area.enum;
+assert.ok(Array.isArray(reviewerAreaEnum), 'reviewer-output.schema.json must constrain findings[].area to an enum, not a free string');
+assert.deepEqual([...reviewerAreaEnum].sort(), [...prLogAreaEnum].sort(), 'reviewer-output area enum must equal pr_log area enum');
+
+// Finding 3 (E_reliability): an explicit CODEX_OUTPUT_SCHEMA path that does not exist is a typo, not a
+// disable — it must fail fast, while the documented disable sentinels still return undefined.
+assert.throws(() => resolveCodexOutputSchema('/definitely/missing-schema.json'), /CODEX_OUTPUT_SCHEMA=.*does not exist/, 'missing explicit schema path must throw, not silently disable schema output');
+assert.equal(resolveCodexOutputSchema('0'), undefined, 'CODEX_OUTPUT_SCHEMA=0 disables schema-constrained output');
+assert.equal(resolveCodexOutputSchema(''), undefined, 'empty CODEX_OUTPUT_SCHEMA disables schema-constrained output');
+assert.equal(resolveCodexOutputSchema('none'), undefined, 'CODEX_OUTPUT_SCHEMA=none disables schema-constrained output');
+
+// Finding 4 (E_reliability): pr_log state-fallback must be reviewer-scoped so a codex run never adopts a
+// claude/api (or legacy, reviewerId-less) row as its own previous state, and vice versa.
+assert.equal(reviewStateMatchesReviewer({ reviewerId: 'codex', kind: 'code' }, 'codex'), true);
+assert.equal(reviewStateMatchesReviewer({ reviewerId: 'default', kind: 'code' }, 'codex'), false, 'a claude/api default row must not be reused as codex previous state');
+assert.equal(reviewStateMatchesReviewer({ kind: 'code' }, 'codex'), false, 'a legacy row with no reviewerId must not be reused as codex previous state');
+assert.equal(reviewStateMatchesReviewer({ kind: 'code' }, 'default'), true, 'a legacy code row maps to the default marker for backward compatibility');
+assert.equal(reviewStateMatchesReviewer({ kind: 'proposal' }, 'proposal'), true, 'a legacy proposal row maps to the proposal marker');
+assert.equal(reviewStateMatchesReviewer({ kind: 'proposal' }, 'codex-proposal'), false);
 
 // --diff-file safety preflight: empty/oversized local diffs must fail closed WITHOUT a backend call.
 assert.equal(localDiffPreflight('@@ small @@\n+ok', MAX_DIFF_CHARS), undefined, 'in-budget local diff is sent to the backend');

@@ -93,15 +93,19 @@ function defaultReviewerId(kind, backend) {
   if (backend === 'codex-cli') return kind === 'proposal' ? 'codex-proposal' : 'codex';
   return kind === 'proposal' ? 'proposal' : 'default';
 }
-function resolveCodexOutputSchema() {
+function resolveCodexOutputSchema(explicit = process.env.CODEX_OUTPUT_SCHEMA) {
   // JSON Schema constraining the codex-cli backend's final message to the reviewer output shape.
   // Default: sibling reviewer-output.schema.json. Override the path with CODEX_OUTPUT_SCHEMA, or set it
-  // to 0/empty/none to fall back to prompt-only JSON (parseReview still tolerates a fenced block).
-  const explicit = process.env.CODEX_OUTPUT_SCHEMA;
+  // to 0/empty/none to deliberately fall back to prompt-only JSON (parseReview still tolerates a fenced
+  // block). An explicit path that does NOT exist is a typo, not a disable: fail fast so a misconfigured
+  // path can't silently downgrade schema-enforced output to prompt-only.
   if (explicit !== undefined) {
     const trimmed = explicit.trim();
     if (trimmed === '' || trimmed === '0' || trimmed.toLowerCase() === 'none') return undefined;
-    return existsSync(trimmed) ? trimmed : undefined;
+    if (!existsSync(trimmed)) {
+      throw new Error(`CODEX_OUTPUT_SCHEMA=${explicit} does not exist. Point it at a readable JSON Schema file, or set it to 0/empty/none to disable schema-constrained codex output.`);
+    }
+    return trimmed;
   }
   const sibling = fileURLToPath(new URL('./reviewer-output.schema.json', import.meta.url));
   return existsSync(sibling) ? sibling : undefined;
@@ -113,6 +117,17 @@ function normalizeStateKind(value) {
 }
 function reviewStateMatchesKind(state, kind = REVIEW_KIND) {
   return normalizeStateKind(state?.kind) === kind;
+}
+function effectiveStateReviewerId(state) {
+  // pr_log rows written before reviewer-id scoping carry no reviewerId; their implied marker was the
+  // kind-based default (proposal -> 'proposal', else 'default'), never the codex marker. So a codex
+  // run will not adopt a legacy claude/api row as its own previous state.
+  const explicit = state?.reviewerId;
+  if (explicit != null && String(explicit).trim() !== '') return String(explicit);
+  return normalizeStateKind(state?.kind) === 'proposal' ? 'proposal' : 'default';
+}
+function reviewStateMatchesReviewer(state, reviewerId = REVIEWER_ID) {
+  return effectiveStateReviewerId(state) === reviewerId;
 }
 function reviewerSystemFile() {
   return REVIEW_KIND === 'proposal' ? '../reviewer/PROPOSAL-CHECKLIST.md' : '../reviewer/CHECKLIST.md';
@@ -314,6 +329,9 @@ function readLatestReviewStateFromLog(repo, pr) {
       if (String(record.repo) === String(repo) && String(record.pr) === String(pr) && record.review) {
         if (record.review.failedClosed) continue;
         if (!reviewStateMatchesKind({ kind: record.review.kind })) continue;
+        // Don't let one reviewer's log row become another reviewer's previous state: a codex
+        // gate/confirm-fixes run with no codex comment must NOT adopt the claude/api row here.
+        if (!reviewStateMatchesReviewer({ reviewerId: record.review.reviewerId, kind: record.review.kind })) continue;
         return {
           version: 1,
           kind: normalizeStateKind(record.review.kind),
@@ -467,7 +485,7 @@ async function reviewLocalDiff(diffFile) {
 function appendReviewRecord(repo, pr, parsed, rounds, backend, hasOverlay) {
   const record = buildPrRecord(repo, pr);
   record.head_sha = parsed.reviewedHeadSha ?? record.head_sha;
-  record.review = { kind: REVIEW_KIND, verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
+  record.review = { kind: REVIEW_KIND, reviewerId: REVIEWER_ID, verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
     failedClosed: parsed.failedClosed === true,
     reviewedHeadSha: parsed.reviewedHeadSha ?? record.head_sha,
     previousReviewedHead: parsed.previousReviewedHead ?? null,
@@ -1229,9 +1247,11 @@ export {
   shouldFailClosedWithoutPreviousReview,
   normalizeStateKind,
   reviewStateMatchesKind,
+  reviewStateMatchesReviewer,
   localDiffPreflight,
   normalizeBackend,
   defaultReviewerId,
+  resolveCodexOutputSchema,
   REVIEW_KIND,
   REVIEW_MODE,
   REVIEW_PROFILE,

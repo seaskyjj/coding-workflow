@@ -376,12 +376,19 @@ async function review() {
     // full changed-document context fetched below instead.
     diffPlan.followupContext = buildNecessaryFileContext(repo, meta, previousReview);
   }
-  if (REVIEW_KIND === 'proposal') {
+  if (REVIEW_KIND === 'proposal' && !shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)) {
     // A proposal's argument lives in the whole document, but the PR diff is only the changed hunks. Fetch
     // the full current text of changed doc files so the reviewer reconstructs the argument chain instead
     // of over-confidently approving (or over-eagerly failing closed) on partial context. Built here (vs.
     // at review time) so `--print-diff-plan` can show exactly which docs are included vs flagged.
-    diffPlan.fullDocContext = buildProposalDocContext(repo, pr, meta);
+    // The doc budget leaves room for the diff under MAX_DIFF_CHARS so the composed prompt can't exceed
+    // the advertised review cap; docs squeezed out are flagged and force needs_human like omitted files.
+    const docCap = proposalDocContextBudget(largestBatchChars(diffPlan));
+    diffPlan.fullDocContext = buildProposalDocContext(repo, pr, meta, docCap);
+    if (diffPlan.fullDocContext.omitted.length > 0) {
+      diffPlan.omittedDocs = diffPlan.fullDocContext.omitted;
+      diffPlan.partial = true; // partial argument must not be approved — force needs_human at the runner.
+    }
   }
   if (hasArg('--print-diff-plan')) {
     console.log(JSON.stringify(summarizeDiffPlan(diffPlan), null, 2));
@@ -886,6 +893,17 @@ function isProposalDocPath(path) {
   return /\.(md|mdx|markdown|txt|rst|adoc|asciidoc)$/i.test(String(path ?? ''));
 }
 
+function largestBatchChars(diffPlan) {
+  return (diffPlan.batches ?? []).reduce((max, batch) => Math.max(max, batch.chars ?? batch.diff?.length ?? 0), 0);
+}
+
+// Full-doc context shares the model's input budget with the diff: cap docs so the largest composed
+// (diff + doc) prompt stays within MAX_DIFF_CHARS instead of appending a second cap on top of it. When a
+// big diff leaves little room, docs are squeezed out, flagged, and force needs_human (fail closed).
+function proposalDocContextBudget(largestBatch, docCap = PROPOSAL_DOC_CONTEXT_CHARS, maxDiffChars = MAX_DIFF_CHARS) {
+  return Math.max(0, Math.min(docCap, maxDiffChars - Math.max(0, largestBatch)));
+}
+
 // Fetch the full current text of changed doc files for a proposal PR review. Returns the assembled
 // context plus the list of changed docs that could NOT be included in full (over budget / non-text /
 // fetch failed / deleted), so the prompt can still fail closed for those.
@@ -1157,8 +1175,19 @@ function mergeReviewResults(reviewResults, diffPlan) {
       couldNotVerify.push(`NOT reviewed: ${omitted.path} — ${omitted.reason}. Try: ${omitted.apiCommand} ; or after checkout: ${omitted.localCommand}`);
     }
   }
+  // Proposal full-doc omissions are a fail-closed condition enforced by the runner, not just the prompt:
+  // an incomplete argument must not be approvable even if the model returns approve.
+  const omittedDocs = diffPlan.omittedDocs ?? [];
+  if (omittedDocs.length > 0) {
+    couldNotVerify.unshift(
+      'One or more changed documents could not be included in full, so the complete argument was not available to the reviewer; overall verdict is forced to needs_human.',
+    );
+    for (const omitted of omittedDocs) {
+      couldNotVerify.push(`Full document context NOT available: ${omitted.path} — ${omitted.reason}.`);
+    }
+  }
 
-  const verdict = diffPlan.partial ? 'needs_human' : strongestVerdict(parsedResults.map((p) => p.verdict));
+  const verdict = (diffPlan.partial || omittedDocs.length > 0) ? 'needs_human' : strongestVerdict(parsedResults.map((p) => p.verdict));
   const summaries = parsedResults.map((p) => p.summary).filter(Boolean);
   const diffScopePrefix = diffPlan.incremental
     ? `Reviewed incremental diff ${shortSha(diffPlan.previousHeadSha)}...${shortSha(diffPlan.currentHeadSha)}. `
@@ -1273,7 +1302,7 @@ function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousRevi
     `Kind: \`${REVIEW_KIND}\` · Mode: \`${REVIEW_MODE}\` · Profile: \`${REVIEW_PROFILE}\` · Finding cap: \`${MAX_FINDINGS}\``,
     scopeLine,
     parsed.summary ? `\n${parsed.summary}\n` : '',
-    diffPlan.partial ? '> ⚠️ one or more file patches were unavailable or over the size cap — review is **partial**, forced to `needs_human`.\n' : '',
+    diffPlan.partial ? '> ⚠️ one or more file patches or changed documents were unavailable or over the size cap — review is **partial**, forced to `needs_human`.\n' : '',
   ];
   const findings = parsed.findings ?? [];
   if (findings.length === 0) {
@@ -1351,6 +1380,7 @@ export {
   isProposalDocPath,
   assembleProposalDocContext,
   renderProposalDocContext,
+  proposalDocContextBudget,
   REVIEW_KIND,
   REVIEW_MODE,
   REVIEW_PROFILE,

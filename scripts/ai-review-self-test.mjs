@@ -14,6 +14,7 @@ import {
   mergeReviewResults,
   normalizeBackend,
   normalizeStateKind,
+  proposalDocContextBudget,
   renderProposalDocContext,
   parsePositiveInteger,
   parseReviewStateFromComment,
@@ -275,5 +276,34 @@ assert.ok(rendered.includes('FULL CHANGED-DOCUMENT CONTEXT'), 'must label the fu
 assert.ok(rendered.includes('CHANGED DOCUMENTS NOT INCLUDED IN FULL') && rendered.includes('fail closed'), 'must surface omitted docs as fail-closed context');
 // Code review (no fullDocContext) must be entirely unaffected.
 assert.equal(renderProposalDocContext(undefined, 'sha'), '');
+
+// --- Codex review findings on PR #5, encoded as regression tests ---------------------------------
+
+// Finding 1 (C_policy): omitted changed docs are a RUNNER-enforced fail-closed condition — a model
+// returning approve must still be forced to needs_human, with the omitted doc surfaced.
+const omittedDocPlan = {
+  ...diffPlan,
+  partial: false,
+  omittedFiles: [],
+  omittedDocs: [{ path: 'docs/adr/0009-big.md', reason: 'full document is 999999 chars, above PROPOSAL_DOC_CONTEXT_CHARS=120000' }],
+};
+const forcedByDocOmission = mergeReviewResults(
+  [{ batch: { label: 'proposal' }, parsed: { verdict: 'approve', summary: 'looks fine', findings: [] } }],
+  omittedDocPlan,
+);
+assert.equal(forcedByDocOmission.verdict, 'needs_human', 'an omitted changed doc must force needs_human even if the backend returned approve');
+assert.ok(
+  forcedByDocOmission.could_not_verify.some((entry) => entry.includes('docs/adr/0009-big.md')),
+  'the omitted doc must be named in could_not_verify',
+);
+
+// Finding 2 (B_contract): full-doc context shares the diff budget — a near-cap batch diff shrinks the
+// doc budget so the composed (diff + docs) prompt stays within MAX_DIFF_CHARS, never cap-on-top-of-cap.
+assert.equal(proposalDocContextBudget(0, 120000, 200000), 120000, 'a tiny diff leaves the full doc cap available');
+assert.equal(proposalDocContextBudget(190000, 120000, 200000), 10000, 'a near-cap diff shrinks the doc budget to the remaining room');
+assert.equal(proposalDocContextBudget(200000, 120000, 200000), 0, 'a diff at the cap leaves no room for docs (they get flagged -> needs_human)');
+for (const batch of [0, 50000, 199000, 250000]) {
+  assert.ok(proposalDocContextBudget(batch, 120000, 200000) + Math.min(batch, 200000) <= 200000, `composed diff+docs budget must stay within MAX_DIFF_CHARS (batch=${batch})`);
+}
 
 console.log('ai-review self-tests passed.');

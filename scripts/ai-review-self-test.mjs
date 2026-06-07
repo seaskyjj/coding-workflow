@@ -3,13 +3,18 @@ import assert from 'node:assert/strict';
 import {
   buildFilePatchDiffPlan,
   MAX_FINDINGS,
+  MAX_DIFF_CHARS,
   buildMissingPreviousReviewResult,
   findReviewCommentInList,
+  localDiffPreflight,
   mergeReviewResults,
+  normalizeStateKind,
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
   resolveTrustedCommentAuthor,
+  reviewStateMatchesKind,
+  REVIEW_KIND,
   shouldRunSynthesis,
   shouldFailClosedWithoutPreviousReview,
 } from './ai-review.mjs';
@@ -44,6 +49,33 @@ assert.equal(parsedState.findings[0].issue, stateParsed.findings[0].issue);
 assert.equal(parsedState.findings[0].status, 'open');
 assert.equal(parsedState.headSha, 'abc1234567890');
 assert.equal(parsedState.currentHead, 'abc1234567890');
+// The default test process runs as REVIEW_KIND=code, so rendered state must stamp that kind and a
+// later same-kind run must accept it as previous context.
+assert.equal(REVIEW_KIND, 'code', 'self-test process should default to the code review kind');
+assert.equal(parsedState.kind, 'code', 'rendered review state must record its review kind');
+
+// Review-kind isolation: a proposal run must not consume code-review state and vice versa; legacy
+// state with no kind field is treated as code so it is not silently reused by a proposal review.
+assert.equal(normalizeStateKind(undefined), 'code', 'missing kind defaults to code (legacy records)');
+assert.equal(normalizeStateKind('proposal'), 'proposal');
+assert.equal(normalizeStateKind('CODE'), 'code');
+assert.equal(reviewStateMatchesKind({ kind: 'code' }, 'code'), true);
+assert.equal(reviewStateMatchesKind({ kind: 'proposal' }, 'code'), false);
+assert.equal(reviewStateMatchesKind({}, 'proposal'), false, 'legacy code state must not be reused as proposal context');
+assert.equal(reviewStateMatchesKind({ kind: 'proposal' }, 'proposal'), true);
+
+// --diff-file safety preflight: empty/oversized local diffs must fail closed WITHOUT a backend call.
+assert.equal(localDiffPreflight('@@ small @@\n+ok', MAX_DIFF_CHARS), undefined, 'in-budget local diff is sent to the backend');
+const emptyPreflight = localDiffPreflight('', MAX_DIFF_CHARS);
+assert.equal(emptyPreflight.verdict, 'needs_human', 'empty local diff must not be approved');
+assert.ok(emptyPreflight.could_not_verify.some((e) => e.includes('empty')), 'empty preflight must explain why');
+const oversizedPreflight = localDiffPreflight('x'.repeat(MAX_DIFF_CHARS + 1), MAX_DIFF_CHARS);
+assert.equal(oversizedPreflight.verdict, 'needs_human', 'oversized local diff must fail closed, not approve a truncated review');
+assert.equal(oversizedPreflight.findings.length, 0);
+assert.ok(
+  oversizedPreflight.could_not_verify.some((e) => e.includes(`MAX_DIFF_CHARS=${MAX_DIFF_CHARS}`)),
+  'oversized preflight must point at the cap that blocked the local review',
+);
 
 const legacyState = { version: 1, verdict: 'approve', findings: [] };
 const legacyBlock = `<!-- ai-review-state:default\n${JSON.stringify(legacyState)}\nai-review-state:end -->`;

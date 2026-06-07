@@ -95,6 +95,26 @@ REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 \
 
 For GitHub Actions, the consumer template still recognizes the PR label `review:pilot-minimal` as documentation of intent, but it does not call the metered API reviewer by default. Do not set `REVIEW_PROFILE` as a sticky repository variable; that silently downgrades all future local/API reviews when the API step is re-enabled.
 
+## Review kinds (code vs proposal)
+
+`REVIEW_KIND` selects *what* is being reviewed; it is orthogonal to mode/profile.
+
+- **`code`** (default): review a PR code diff against `reviewer/CHECKLIST.md` — authz/tenant, contract drift, policy invariants, fail-closed, visual. This is the historical behavior; nothing changes if you don't set `REVIEW_KIND`.
+- **`proposal`**: review a **design doc / ADR / investigation write-up / "next-step direction"** against `reviewer/PROPOSAL-CHECKLIST.md`. A docs diff has nothing to type-check or run, so code-diff review is structurally blind to it. Proposal review instead pressure-tests the *reasoning*: argument chain (R1), root-cause vs fix alignment (R2), cheapest disconfirming experiment (R3), alternative hypotheses/levers (R4), metric gaming (R5), domain grounding / fabricated constraints (R6), over-engineering/sequencing (R7), and decided-vs-implemented honesty (R8). It does **not** flag wording/typos/formatting.
+
+```bash
+# Review an ADR/direction doc on a PR (own living comment + pr_log, isolated from code review).
+REVIEW_KIND=proposal node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+
+# Review a local diff with no PR (prints JSON to stdout; no comment/log written).
+REVIEW_KIND=proposal node scripts/ai-review.mjs --diff-file path/to/changes.diff
+git diff main...HEAD -- 'docs/**' > /tmp/x.diff   # e.g. produce that diff
+```
+
+When both kinds run on the **same PR**, they do not collide: the default comment marker, living-comment state, and `pr_log` `kind` are scoped per kind (code keeps the `default` marker; proposal defaults to `proposal`), and a follow-up review only consumes previous state of its own kind. To run two of the same kind separately, give each a distinct `REVIEW_COMMENT_ID`.
+
+`--diff-file` reviews a raw local diff with no GitHub file-batch planning, so it enforces the same `MAX_DIFF_CHARS` contract directly: an empty or over-cap diff returns `needs_human` and is **not** sent to the backend (no silent approval of a truncated/over-context review).
+
 ## Two boundaries that must hold
 
 - **AI review is additive; the non-AI gate is the safety net.** typecheck/test/lint/eval-gate run independently of any AI judgment. If the AI reviewer misses something, the gate still stands.

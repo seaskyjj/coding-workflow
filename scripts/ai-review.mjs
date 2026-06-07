@@ -31,6 +31,7 @@
 //   MAX_FINDINGS        default 12 for deep, 5 for gate/confirm-fixes/pilot_minimal
 //   REVIEW_CONTEXT_CHARS default 40000 (confirm-fixes targeted current-file context cap)
 //   REVIEW_CONTEXT_LINES default 80 (line-radius for confirm-fixes targeted current-file context)
+//   PROPOSAL_DOC_CONTEXT_CHARS default min(120000, MAX_DIFF_CHARS) (REVIEW_KIND=proposal full changed-doc context cap)
 // Args: --repo owner/name --pr N [--backend api|claude-cli|codex-cli] [--overlay path]
 //       [--review-mode deep|gate|confirm-fixes] [--review-profile standard|pilot_minimal] [--print-diff-plan]
 //
@@ -58,6 +59,10 @@ const REVIEW_SYNTHESIS_ENABLED = process.env.REVIEW_SYNTHESIS !== '0' && REVIEW_
 const SYNTHESIS_PATCH_CHARS = parsePositiveInteger(process.env.SYNTHESIS_PATCH_CHARS, Math.min(120000, Math.floor(MAX_DIFF_CHARS * 0.6)));
 const REVIEW_CONTEXT_CHARS = parsePositiveInteger(process.env.REVIEW_CONTEXT_CHARS, Math.min(40000, Math.floor(MAX_DIFF_CHARS * 0.25)));
 const REVIEW_CONTEXT_LINES = parsePositiveInteger(process.env.REVIEW_CONTEXT_LINES, 80);
+// proposal review (REVIEW_KIND=proposal) auto-fetches the full current text of changed doc files so the
+// reviewer can reconstruct the whole argument, not just the changed hunks. Bounded by this cap; docs that
+// don't fit are flagged so the prompt still fails closed for them.
+const PROPOSAL_DOC_CONTEXT_CHARS = parsePositiveInteger(process.env.PROPOSAL_DOC_CONTEXT_CHARS, Math.min(120000, MAX_DIFF_CHARS));
 const PR_LOG_PATH = process.env.PR_LOG_PATH ?? 'pr_log.jsonl';
 // reviewer-scoped marker so multiple AI reviewers (claude / codex) don't overwrite each other's comment.
 // The default is also kind-scoped so a proposal review never upserts/overwrites the code-review living
@@ -365,8 +370,25 @@ async function review() {
   const diffPlan = shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)
     ? buildNoPreviousReviewDiffPlan(repo, pr, meta, previousReview)
     : buildDiffPlan(repo, pr, meta, previousReview);
-  if (REVIEW_MODE === 'confirm-fixes' && previousReview) {
+  if (REVIEW_MODE === 'confirm-fixes' && previousReview && REVIEW_KIND === 'code') {
+    // Code confirm-fixes adds line-radius context around previous finding locations. Proposal findings
+    // are section headings/quoted claims (not file:line), so this is noise there — proposal uses the
+    // full changed-document context fetched below instead.
     diffPlan.followupContext = buildNecessaryFileContext(repo, meta, previousReview);
+  }
+  if (REVIEW_KIND === 'proposal' && !shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)) {
+    // A proposal's argument lives in the whole document, but the PR diff is only the changed hunks. Fetch
+    // the full current text of changed doc files so the reviewer reconstructs the argument chain instead
+    // of over-confidently approving (or over-eagerly failing closed) on partial context. Built here (vs.
+    // at review time) so `--print-diff-plan` can show exactly which docs are included vs flagged.
+    // The doc budget leaves room for the diff under MAX_DIFF_CHARS so the composed prompt can't exceed
+    // the advertised review cap; docs squeezed out are flagged and force needs_human like omitted files.
+    const docCap = proposalDocContextBudget(largestBatchChars(diffPlan));
+    diffPlan.fullDocContext = buildProposalDocContext(repo, pr, meta, docCap);
+    if (diffPlan.fullDocContext.omitted.length > 0) {
+      diffPlan.omittedDocs = diffPlan.fullDocContext.omitted;
+      diffPlan.partial = true; // partial argument must not be approved — force needs_human at the runner.
+    }
   }
   if (hasArg('--print-diff-plan')) {
     console.log(JSON.stringify(summarizeDiffPlan(diffPlan), null, 2));
@@ -865,6 +887,89 @@ function fetchFileContentAtRef(repo, path, ref) {
   }
 }
 
+// Proposal docs are markdown/plain-text artifacts whose argument lives in the full document, not the
+// changed hunk. (Code/binary files are reviewed from the diff only — full content there is noise.)
+function isProposalDocPath(path) {
+  return /\.(md|mdx|markdown|txt|rst|adoc|asciidoc)$/i.test(String(path ?? ''));
+}
+
+function largestBatchChars(diffPlan) {
+  return (diffPlan.batches ?? []).reduce((max, batch) => Math.max(max, batch.chars ?? batch.diff?.length ?? 0), 0);
+}
+
+// Full-doc context shares the model's input budget with the diff: cap docs so the largest composed
+// (diff + doc) prompt stays within MAX_DIFF_CHARS instead of appending a second cap on top of it. When a
+// big diff leaves little room, docs are squeezed out, flagged, and force needs_human (fail closed).
+function proposalDocContextBudget(largestBatch, docCap = PROPOSAL_DOC_CONTEXT_CHARS, maxDiffChars = MAX_DIFF_CHARS) {
+  return Math.max(0, Math.min(docCap, maxDiffChars - Math.max(0, largestBatch)));
+}
+
+// Fetch the full current text of changed doc files for a proposal PR review. Returns the assembled
+// context plus the list of changed docs that could NOT be included in full (over budget / non-text /
+// fetch failed / deleted), so the prompt can still fail closed for those.
+function buildProposalDocContext(repo, pr, meta, cap = PROPOSAL_DOC_CONTEXT_CHARS) {
+  let files;
+  try {
+    files = JSON.parse(gh(['api', `repos/${repo}/pulls/${pr}/files`, '--paginate']));
+  } catch (err) {
+    return { text: '', includedPaths: [], omitted: [{ path: '(changed file list)', reason: `could not list PR files: ${err.message ?? err}` }] };
+  }
+  const docs = (Array.isArray(files) ? files : [])
+    .filter((file) => isProposalDocPath(file.filename))
+    .sort((a, b) => String(a.filename ?? '').localeCompare(String(b.filename ?? '')))
+    .map((file) => ({
+      path: file.filename,
+      // status 'removed' has no content at head; flag it as a deletion rather than fetching.
+      content: file.status === 'removed' ? undefined : fetchFileContentAtRef(repo, file.filename, meta.headRefOid),
+      removed: file.status === 'removed',
+    }));
+  return assembleProposalDocContext(docs, cap, meta.headRefOid);
+}
+
+// Pure assembly + budgeting for proposal full-doc context (network-free, unit-testable).
+function assembleProposalDocContext(docs, cap, ref) {
+  const parts = [];
+  const includedPaths = [];
+  const omitted = [];
+  let remaining = cap;
+  for (const doc of docs ?? []) {
+    if (doc.content == null) {
+      omitted.push({
+        path: doc.path,
+        reason: doc.removed
+          ? 'deleted in this PR — no current content to reconstruct'
+          : `current content not available at ${shortSha(ref)} (binary, moved, or fetch failed)`,
+      });
+      continue;
+    }
+    const rendered = `### ${doc.path}\n${doc.content}`;
+    if (rendered.length > remaining) {
+      omitted.push({
+        path: doc.path,
+        reason: remaining === cap
+          ? `full document is ${rendered.length} chars, above PROPOSAL_DOC_CONTEXT_CHARS=${cap}`
+          : `did not fit the remaining ${remaining} chars of the PROPOSAL_DOC_CONTEXT_CHARS=${cap} budget`,
+      });
+      continue;
+    }
+    parts.push(rendered);
+    includedPaths.push(doc.path);
+    remaining -= rendered.length + 2; // +2 approximates the "\n\n" join separator
+  }
+  return { text: parts.join('\n\n'), includedPaths, omitted };
+}
+
+function renderProposalDocContext(fullDocContext, ref) {
+  if (!fullDocContext) return '';
+  const included = fullDocContext.text
+    ? `\n\nFULL CHANGED-DOCUMENT CONTEXT (current text at ${shortSha(ref)} — the DIFF above shows only the changed hunks; use this full text to reconstruct the argument chain):\n\n${fullDocContext.text}`
+    : '';
+  const omitted = (fullDocContext.omitted ?? []).length > 0
+    ? `\n\nCHANGED DOCUMENTS NOT INCLUDED IN FULL (treat as missing context — fail closed / needs_human if your judgment depends on them):\n${fullDocContext.omitted.map((o) => `- ${o.path}: ${o.reason}`).join('\n')}`
+    : '';
+  return `${included}${omitted}`;
+}
+
 function renderFileContext(path, content, lineHints) {
   const lines = content.split(/\r?\n/);
   const hints = [...new Set(lineHints.filter((line) => Number.isInteger(line) && line > 0))].sort((a, b) => a - b);
@@ -909,7 +1014,8 @@ function buildReviewUserText(promptTemplate, meta, batch, diffPlan, previousRevi
   const context = diffPlan.followupContext
     ? `\n\nTARGETED CURRENT-FILE CONTEXT (for confirming previous findings only):\n\n${diffPlan.followupContext}`
     : '';
-  return `${promptTemplate}\n\n---\n${reviewModeInstructions(previousReview)}${incrementalNote}\n\nPR TITLE: ${meta.title}\n\nPR BODY:\n${meta.body ?? '(none)'}${batchNote}\n\nDIFF:\n\n${batch.diff}${context}`;
+  const docContext = renderProposalDocContext(diffPlan.fullDocContext, diffPlan.currentHeadSha ?? meta.headRefOid);
+  return `${promptTemplate}\n\n---\n${reviewModeInstructions(previousReview)}${incrementalNote}\n\nPR TITLE: ${meta.title}\n\nPR BODY:\n${meta.body ?? '(none)'}${batchNote}\n\nDIFF:\n\n${batch.diff}${context}${docContext}`;
 }
 
 function reviewModeInstructions(previousReview) {
@@ -1069,8 +1175,19 @@ function mergeReviewResults(reviewResults, diffPlan) {
       couldNotVerify.push(`NOT reviewed: ${omitted.path} — ${omitted.reason}. Try: ${omitted.apiCommand} ; or after checkout: ${omitted.localCommand}`);
     }
   }
+  // Proposal full-doc omissions are a fail-closed condition enforced by the runner, not just the prompt:
+  // an incomplete argument must not be approvable even if the model returns approve.
+  const omittedDocs = diffPlan.omittedDocs ?? [];
+  if (omittedDocs.length > 0) {
+    couldNotVerify.unshift(
+      'One or more changed documents could not be included in full, so the complete argument was not available to the reviewer; overall verdict is forced to needs_human.',
+    );
+    for (const omitted of omittedDocs) {
+      couldNotVerify.push(`Full document context NOT available: ${omitted.path} — ${omitted.reason}.`);
+    }
+  }
 
-  const verdict = diffPlan.partial ? 'needs_human' : strongestVerdict(parsedResults.map((p) => p.verdict));
+  const verdict = (diffPlan.partial || omittedDocs.length > 0) ? 'needs_human' : strongestVerdict(parsedResults.map((p) => p.verdict));
   const summaries = parsedResults.map((p) => p.summary).filter(Boolean);
   const diffScopePrefix = diffPlan.incremental
     ? `Reviewed incremental diff ${shortSha(diffPlan.previousHeadSha)}...${shortSha(diffPlan.currentHeadSha)}. `
@@ -1150,6 +1267,14 @@ function summarizeDiffPlan(diffPlan) {
       priority: patch.priority,
     })),
     omittedFiles: diffPlan.omittedFiles,
+    ...(diffPlan.fullDocContext ? {
+      proposalDocContext: {
+        contextChars: diffPlan.fullDocContext.text.length,
+        maxContextChars: PROPOSAL_DOC_CONTEXT_CHARS,
+        includedDocs: diffPlan.fullDocContext.includedPaths,
+        omittedDocs: diffPlan.fullDocContext.omitted,
+      },
+    } : {}),
   };
 }
 
@@ -1177,7 +1302,7 @@ function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousRevi
     `Kind: \`${REVIEW_KIND}\` · Mode: \`${REVIEW_MODE}\` · Profile: \`${REVIEW_PROFILE}\` · Finding cap: \`${MAX_FINDINGS}\``,
     scopeLine,
     parsed.summary ? `\n${parsed.summary}\n` : '',
-    diffPlan.partial ? '> ⚠️ one or more file patches were unavailable or over the size cap — review is **partial**, forced to `needs_human`.\n' : '',
+    diffPlan.partial ? '> ⚠️ one or more file patches or changed documents were unavailable or over the size cap — review is **partial**, forced to `needs_human`.\n' : '',
   ];
   const findings = parsed.findings ?? [];
   if (findings.length === 0) {
@@ -1252,6 +1377,10 @@ export {
   normalizeBackend,
   defaultReviewerId,
   resolveCodexOutputSchema,
+  isProposalDocPath,
+  assembleProposalDocContext,
+  renderProposalDocContext,
+  proposalDocContextBudget,
   REVIEW_KIND,
   REVIEW_MODE,
   REVIEW_PROFILE,

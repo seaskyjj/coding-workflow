@@ -5,13 +5,17 @@ import {
   buildFilePatchDiffPlan,
   MAX_FINDINGS,
   MAX_DIFF_CHARS,
+  assembleProposalDocContext,
   buildMissingPreviousReviewResult,
   defaultReviewerId,
   findReviewCommentInList,
+  isProposalDocPath,
   localDiffPreflight,
   mergeReviewResults,
   normalizeBackend,
   normalizeStateKind,
+  proposalDocContextBudget,
+  renderProposalDocContext,
   parsePositiveInteger,
   parseReviewStateFromComment,
   renderReviewState,
@@ -223,5 +227,83 @@ assert.ok(
   missingPrevious.could_not_verify.some((entry) => entry.includes('No previous review state with headSha')),
   'follow-up review without previous headSha state must explain why it needs a human',
 );
+
+// --- Proposal full-document context (F3 deferred enhancement) -------------------------------------
+
+// Only markdown/text docs carry a full-document argument; code/binary files are reviewed from the diff.
+for (const doc of ['docs/adr/0007.md', 'NOTES.mdx', 'plan.markdown', 'a/b.txt', 'design.rst', 'x.adoc']) {
+  assert.equal(isProposalDocPath(doc), true, `${doc} should count as a proposal doc`);
+}
+for (const nonDoc of ['src/server.ts', 'image.png', 'data.json', 'Makefile', 'a.mdz']) {
+  assert.equal(isProposalDocPath(nonDoc), false, `${nonDoc} should NOT count as a proposal doc`);
+}
+
+// Full docs within budget are included verbatim; nothing is flagged as omitted.
+const fitCtx = assembleProposalDocContext(
+  [{ path: 'docs/b.md', content: 'BBB' }, { path: 'docs/a.md', content: 'AAA' }],
+  1000,
+  'deadbeef1234',
+);
+assert.deepEqual(fitCtx.includedPaths, ['docs/b.md', 'docs/a.md'], 'assembly preserves caller order');
+assert.ok(fitCtx.text.includes('### docs/a.md\nAAA') && fitCtx.text.includes('### docs/b.md\nBBB'));
+assert.equal(fitCtx.omitted.length, 0);
+
+// A doc over the whole budget is flagged (not silently truncated) so the prompt can fail closed for it,
+// while a smaller later doc still fits — i.e. partial context is surfaced, never silently approved.
+const overCtx = assembleProposalDocContext(
+  [{ path: 'big.md', content: 'x'.repeat(50) }, { path: 'small.md', content: 'ok' }],
+  20,
+  'sha',
+);
+assert.deepEqual(overCtx.includedPaths, ['small.md']);
+assert.equal(overCtx.omitted.length, 1);
+assert.equal(overCtx.omitted[0].path, 'big.md');
+assert.ok(overCtx.omitted[0].reason.includes('PROPOSAL_DOC_CONTEXT_CHARS=20'), 'omission must point at the cap that blocked it');
+
+// Deleted / unfetchable docs are flagged as missing context, not dropped silently.
+const missingDocCtx = assembleProposalDocContext(
+  [{ path: 'gone.md', content: undefined, removed: true }, { path: 'binary.md', content: undefined }],
+  1000,
+  'sha9',
+);
+assert.equal(missingDocCtx.text, '');
+assert.equal(missingDocCtx.omitted.length, 2);
+assert.ok(missingDocCtx.omitted.find((o) => o.path === 'gone.md').reason.includes('deleted'));
+
+// Rendered block tells the reviewer to reconstruct from full text AND to fail closed for omitted docs.
+const rendered = renderProposalDocContext(overCtx, 'sha');
+assert.ok(rendered.includes('FULL CHANGED-DOCUMENT CONTEXT'), 'must label the full-document context block');
+assert.ok(rendered.includes('CHANGED DOCUMENTS NOT INCLUDED IN FULL') && rendered.includes('fail closed'), 'must surface omitted docs as fail-closed context');
+// Code review (no fullDocContext) must be entirely unaffected.
+assert.equal(renderProposalDocContext(undefined, 'sha'), '');
+
+// --- Codex review findings on PR #5, encoded as regression tests ---------------------------------
+
+// Finding 1 (C_policy): omitted changed docs are a RUNNER-enforced fail-closed condition — a model
+// returning approve must still be forced to needs_human, with the omitted doc surfaced.
+const omittedDocPlan = {
+  ...diffPlan,
+  partial: false,
+  omittedFiles: [],
+  omittedDocs: [{ path: 'docs/adr/0009-big.md', reason: 'full document is 999999 chars, above PROPOSAL_DOC_CONTEXT_CHARS=120000' }],
+};
+const forcedByDocOmission = mergeReviewResults(
+  [{ batch: { label: 'proposal' }, parsed: { verdict: 'approve', summary: 'looks fine', findings: [] } }],
+  omittedDocPlan,
+);
+assert.equal(forcedByDocOmission.verdict, 'needs_human', 'an omitted changed doc must force needs_human even if the backend returned approve');
+assert.ok(
+  forcedByDocOmission.could_not_verify.some((entry) => entry.includes('docs/adr/0009-big.md')),
+  'the omitted doc must be named in could_not_verify',
+);
+
+// Finding 2 (B_contract): full-doc context shares the diff budget — a near-cap batch diff shrinks the
+// doc budget so the composed (diff + docs) prompt stays within MAX_DIFF_CHARS, never cap-on-top-of-cap.
+assert.equal(proposalDocContextBudget(0, 120000, 200000), 120000, 'a tiny diff leaves the full doc cap available');
+assert.equal(proposalDocContextBudget(190000, 120000, 200000), 10000, 'a near-cap diff shrinks the doc budget to the remaining room');
+assert.equal(proposalDocContextBudget(200000, 120000, 200000), 0, 'a diff at the cap leaves no room for docs (they get flagged -> needs_human)');
+for (const batch of [0, 50000, 199000, 250000]) {
+  assert.ok(proposalDocContextBudget(batch, 120000, 200000) + Math.min(batch, 200000) <= 200000, `composed diff+docs budget must stay within MAX_DIFF_CHARS (batch=${batch})`);
+}
 
 console.log('ai-review self-tests passed.');

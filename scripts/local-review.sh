@@ -3,13 +3,14 @@
 # AI reviewer whenever a PR's head sha changes (new PR or new push). Advisory only.
 #
 # Defaults to the claude-cli backend = your Claude subscription (Max), NO metered API key.
-# Requires `claude` (Claude Code) installed and logged in. Override with REVIEW_BACKEND=api.
+# Requires `claude` (Claude Code) installed and logged in. Override with REVIEW_BACKEND=api|codex-cli.
 #
 # Usage:
-#   ./scripts/local-review.sh owner/name [interval_seconds]            # subscription (default)
+#   ./scripts/local-review.sh owner/name [interval_seconds]            # claude subscription (default)
+#   REVIEW_BACKEND=codex-cli ./scripts/local-review.sh owner/name      # codex/chatgpt subscription (needs `codex login`)
 #   REVIEW_BACKEND=api ANTHROPIC_API_KEY=... ./scripts/local-review.sh owner/name
 #
-# Requires: gh (authenticated), node 18+, and either `claude` CLI (default) or ANTHROPIC_API_KEY.
+# Requires: gh (authenticated), node 18+, and one of: `claude` CLI (default), `codex` CLI, or ANTHROPIC_API_KEY.
 export REVIEW_BACKEND="${REVIEW_BACKEND:-claude-cli}"
 # State (reviewed head sha per PR) is kept in .local-review-state so restarts don't re-review.
 # First seen head defaults to deep; later pushes default to confirm-fixes. Run gate explicitly

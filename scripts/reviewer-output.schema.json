@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ai-review reviewer output",
+  "description": "Final-message shape the codex-cli backend is constrained to via `codex exec --output-schema`. Mirrors the JSON contract in reviewer/review-prompt.md and reviewer/proposal-review-prompt.md. `area` is left a free string because the allowed values differ by REVIEW_KIND (code: A_authz/B_contract/... ; proposal: R1_argument/R2_rootcause_fix/...).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "findings", "could_not_verify"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["approve", "approve_after_fixes", "request_changes", "needs_human"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "area", "location", "issue", "why", "fix", "test"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["high", "med", "low"] },
+          "area": { "type": "string" },
+          "location": { "type": "string" },
+          "issue": { "type": "string" },
+          "why": { "type": "string" },
+          "fix": { "type": "string" },
+          "test": { "type": "string" }
+        }
+      }
+    },
+    "could_not_verify": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

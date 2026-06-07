@@ -6,14 +6,20 @@
 // Backends (answers the API-cost question):
 //   --backend claude-cli  -> shells out to `claude -p` (uses your Claude subscription/Max; no metered API key).
 //                            Best for LOCAL or a persistent self-hosted runner where Claude Code is logged in.
+//   --backend codex-cli   -> shells out to `codex exec` (uses your logged-in Codex/ChatGPT account; no metered
+//                            OPENAI_API_KEY). read-only sandbox; the reviewer never modifies files. Requires
+//                            `codex login` on this machine/runner. Defaults to its own `codex` comment marker so
+//                            it does not overwrite the claude/api review comment on the same PR.
 //   --backend api         -> Anthropic Messages API (metered key). Supported for explicit use;
 //                            GitHub Actions templates intentionally skip it by default.
 //   default: env REVIEW_BACKEND or "api".
 //
 // Env:
-//   REVIEW_BACKEND      api | claude-cli
+//   REVIEW_BACKEND      api | claude-cli | codex-cli
 //   ANTHROPIC_API_KEY   (required for api backend)
-//   ANTHROPIC_MODEL     (api default below; or claude-cli model via CLAUDE_CLI_MODEL)
+//   ANTHROPIC_MODEL     (api default below; or claude-cli model via CLAUDE_CLI_MODEL; codex-cli model via CODEX_CLI_MODEL)
+//   CODEX_OUTPUT_SCHEMA path to a JSON Schema constraining the codex-cli final answer (default: sibling
+//                       reviewer-output.schema.json; set 0/empty/none to disable schema-constrained output)
 //   REVIEWER_OVERLAY    path to project-specific overlay md (else auto: .coding-workflow/reviewer-overlay.md or reviewer-overlay.md)
 //   GITHUB_REPOSITORY   owner/name (auto in Actions) or pass --repo
 //   PR_LOG_PATH         default pr_log.jsonl
@@ -25,18 +31,24 @@
 //   MAX_FINDINGS        default 12 for deep, 5 for gate/confirm-fixes/pilot_minimal
 //   REVIEW_CONTEXT_CHARS default 40000 (confirm-fixes targeted current-file context cap)
 //   REVIEW_CONTEXT_LINES default 80 (line-radius for confirm-fixes targeted current-file context)
-// Args: --repo owner/name --pr N [--backend api|claude-cli] [--overlay path]
+// Args: --repo owner/name --pr N [--backend api|claude-cli|codex-cli] [--overlay path]
 //       [--review-mode deep|gate|confirm-fixes] [--review-profile standard|pilot_minimal] [--print-diff-plan]
 //
 // Requires `gh` authenticated (GITHUB_TOKEN/GH_TOKEN in Actions).
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { readFileSync, existsSync, unlinkSync } from 'node:fs';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { buildPrRecord, appendRecord } from './pr-log.mjs';
 
 const API_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 const CLI_MODEL = process.env.CLAUDE_CLI_MODEL; // optional; else CLI default
+const CODEX_MODEL = process.env.CODEX_CLI_MODEL; // optional; else codex default
+const BACKEND = normalizeBackend(arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api');
+const CODEX_OUTPUT_SCHEMA = resolveCodexOutputSchema();
 const REVIEW_MODE = normalizeReviewMode(arg('--review-mode') ?? process.env.REVIEW_MODE ?? 'deep');
 const REVIEW_PROFILE = normalizeReviewProfile(arg('--review-profile') ?? process.env.REVIEW_PROFILE ?? 'standard');
 const REVIEW_KIND = normalizeReviewKind(arg('--review-kind') ?? process.env.REVIEW_KIND ?? 'code');
@@ -49,8 +61,10 @@ const REVIEW_CONTEXT_LINES = parsePositiveInteger(process.env.REVIEW_CONTEXT_LIN
 const PR_LOG_PATH = process.env.PR_LOG_PATH ?? 'pr_log.jsonl';
 // reviewer-scoped marker so multiple AI reviewers (claude / codex) don't overwrite each other's comment.
 // The default is also kind-scoped so a proposal review never upserts/overwrites the code-review living
-// comment (and vice versa). Code review keeps the historical `default` marker for backward compatibility.
-const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? (REVIEW_KIND === 'proposal' ? 'proposal' : 'default');
+// comment (and vice versa), and backend-scoped so a codex review gets its own comment instead of
+// clobbering the claude/api one. claude-cli/api code review keeps the historical `default` marker for
+// backward compatibility. Override explicitly with REVIEW_COMMENT_ID to run more reviewers side by side.
+const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? defaultReviewerId(REVIEW_KIND, BACKEND);
 const MARKER = `<!-- ai-review:${REVIEWER_ID} -->`;
 const STATE_BEGIN = `<!-- ai-review-state:${REVIEWER_ID}`;
 const STATE_END = `ai-review-state:end -->`;
@@ -67,6 +81,30 @@ function normalizeReviewKind(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (['code', 'proposal'].includes(normalized)) return normalized;
   throw new Error(`invalid REVIEW_KIND: ${value}. Expected code or proposal.`);
+}
+function normalizeBackend(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['api', 'claude-cli', 'codex-cli'].includes(normalized)) return normalized;
+  throw new Error(`invalid REVIEW_BACKEND: ${value}. Expected api, claude-cli, or codex-cli.`);
+}
+function defaultReviewerId(kind, backend) {
+  // codex gets its own living comment/state so it never overwrites the claude/api review on the same
+  // PR; claude-cli/api keep the historical default/proposal markers for backward compatibility.
+  if (backend === 'codex-cli') return kind === 'proposal' ? 'codex-proposal' : 'codex';
+  return kind === 'proposal' ? 'proposal' : 'default';
+}
+function resolveCodexOutputSchema() {
+  // JSON Schema constraining the codex-cli backend's final message to the reviewer output shape.
+  // Default: sibling reviewer-output.schema.json. Override the path with CODEX_OUTPUT_SCHEMA, or set it
+  // to 0/empty/none to fall back to prompt-only JSON (parseReview still tolerates a fenced block).
+  const explicit = process.env.CODEX_OUTPUT_SCHEMA;
+  if (explicit !== undefined) {
+    const trimmed = explicit.trim();
+    if (trimmed === '' || trimmed === '0' || trimmed.toLowerCase() === 'none') return undefined;
+    return existsSync(trimmed) ? trimmed : undefined;
+  }
+  const sibling = fileURLToPath(new URL('./reviewer-output.schema.json', import.meta.url));
+  return existsSync(sibling) ? sibling : undefined;
 }
 function normalizeStateKind(value) {
   // Persisted review state (living comment + pr_log) records its kind; legacy/unknown state is
@@ -164,6 +202,47 @@ function callClaudeCli(systemText, userText) {
   });
 }
 
+function callCodexCli(systemText, userText) {
+  // Uses the logged-in Codex/ChatGPT account (no metered OPENAI_API_KEY). Requires `codex login`.
+  // read-only sandbox: the reviewer must NEVER modify files or run privileged commands; with no PR
+  // write access the worst case is a wasted read-only turn. The final JSON answer is captured from
+  // --output-last-message (codex prints the human-readable transcript to stderr, the final message to
+  // stdout); we prefer the dedicated file and fall back to stdout.
+  const lastMessagePath = join(tmpdir(), `ai-review-codex-${randomUUID()}.json`);
+  const cliArgs = [
+    'exec',
+    '--sandbox', 'read-only',
+    '--skip-git-repo-check',
+    '--color', 'never',
+    '--output-last-message', lastMessagePath,
+  ];
+  if (CODEX_MODEL) cliArgs.push('--model', CODEX_MODEL);
+  if (CODEX_OUTPUT_SCHEMA) cliArgs.push('--output-schema', CODEX_OUTPUT_SCHEMA);
+  cliArgs.push('-'); // read the prompt from stdin
+  try {
+    const stdout = execFileSync('codex', cliArgs, {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      input: `${systemText}\n\n=== REVIEW TASK ===\n${userText}`,
+    });
+    const lastMessage = existsSync(lastMessagePath) ? readFileSync(lastMessagePath, 'utf8').trim() : '';
+    return lastMessage || String(stdout ?? '').trim();
+  } finally {
+    try {
+      if (existsSync(lastMessagePath)) unlinkSync(lastMessagePath);
+    } catch {
+      // best-effort cleanup of the temp last-message file
+    }
+  }
+}
+
+// Single backend dispatcher so the three call sites (per-batch, synthesis, local-diff) stay identical.
+async function callBackend(systemText, userText) {
+  if (BACKEND === 'claude-cli') return callClaudeCli(systemText, userText);
+  if (BACKEND === 'codex-cli') return callCodexCli(systemText, userText);
+  return callApi(systemText, userText);
+}
+
 // ---- comment upsert (one living comment, not new each round) --------------
 function listIssueComments(repo, pr) {
   const comments = JSON.parse(gh(['api', `repos/${repo}/issues/${pr}/comments`, '--paginate']));
@@ -254,10 +333,9 @@ function readLatestReviewStateFromLog(repo, pr) {
 }
 
 async function review() {
-  const backend = arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api';
   const diffFile = arg('--diff-file') ?? process.env.REVIEW_DIFF_FILE;
   if (diffFile) {
-    await reviewLocalDiff(diffFile, backend);
+    await reviewLocalDiff(diffFile);
     return;
   }
   const repo = arg('--repo') ?? process.env.GITHUB_REPOSITORY;
@@ -283,10 +361,10 @@ async function review() {
 
   if (shouldFailClosedWithoutPreviousReview(REVIEW_MODE, previousReview)) {
     const parsed = attachReviewMetadata(buildMissingPreviousReviewResult(REVIEW_MODE), diffPlan, meta);
-    const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
+    const comment = renderComment(parsed, diffPlan, overlay != null, BACKEND, meta, previousReview);
     upsertComment(repo, pr, comment);
-    appendReviewRecord(repo, pr, parsed, 0, backend, overlay != null);
-    console.error(`[${backend}] verdict: ${parsed.verdict} (0 findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}; missing previous review state) -> ${repo}#${pr}`);
+    appendReviewRecord(repo, pr, parsed, 0, BACKEND, overlay != null);
+    console.error(`[${BACKEND}] verdict: ${parsed.verdict} (0 findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE}; missing previous review state) -> ${repo}#${pr}`);
     if (process.env.REVIEW_FAIL_ON && parsed.verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
     return;
   }
@@ -295,14 +373,14 @@ async function review() {
   const reviewResults = [];
   for (const batch of diffPlan.batches) {
     const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, previousReview);
-    const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
+    const rawText = await callBackend(systemText, userText);
     reviewResults.push({ batch, parsed: parseReviewOrNeedsHuman(rawText, batch) });
   }
 
   if (shouldRunSynthesis(diffPlan, reviewResults)) {
     const batch = buildSynthesisBatch(diffPlan);
     const userText = buildSynthesisUserText(promptTemplate, meta, batch, diffPlan, reviewResults, previousReview);
-    const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
+    const rawText = await callBackend(systemText, userText);
     reviewResults.push({ batch, parsed: parseReviewOrNeedsHuman(rawText, batch) });
   }
 
@@ -319,13 +397,13 @@ async function review() {
   }
   const parsed = attachReviewMetadata(mergeReviewResults(reviewResults, diffPlan), diffPlan, meta);
 
-  const comment = renderComment(parsed, diffPlan, overlay != null, backend, meta, previousReview);
+  const comment = renderComment(parsed, diffPlan, overlay != null, BACKEND, meta, previousReview);
   upsertComment(repo, pr, comment);
 
-  appendReviewRecord(repo, pr, parsed, reviewResults.length, backend, overlay != null);
+  appendReviewRecord(repo, pr, parsed, reviewResults.length, BACKEND, overlay != null);
 
   const verdict = parsed?.verdict ?? 'needs_human';
-  console.error(`[${backend}] verdict: ${verdict} (${parsed?.findings?.length ?? '?'} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})${isFileBatched(diffPlan) ? ` [${diffPlan.batches.length} file batch(es)]` : ''}${diffPlan.partial ? ' [PARTIAL→needs_human]' : ''} -> ${repo}#${pr}`);
+  console.error(`[${BACKEND}] verdict: ${verdict} (${parsed?.findings?.length ?? '?'} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})${isFileBatched(diffPlan) ? ` [${diffPlan.batches.length} file batch(es)]` : ''}${diffPlan.partial ? ' [PARTIAL→needs_human]' : ''} -> ${repo}#${pr}`);
   if (process.env.REVIEW_FAIL_ON && verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
 }
 
@@ -345,7 +423,7 @@ function localDiffPreflight(content, maxChars = MAX_DIFF_CHARS) {
   return undefined;
 }
 
-async function reviewLocalDiff(diffFile, backend) {
+async function reviewLocalDiff(diffFile) {
   const content = readFileSync(diffFile, 'utf8');
   const preflight = localDiffPreflight(content, MAX_DIFF_CHARS);
   let parsed;
@@ -367,7 +445,7 @@ async function reviewLocalDiff(diffFile, backend) {
     const diffPlan = { mode: 'full-diff', fullDiffChars: content.length, batches: [], omittedFiles: [], partial: false };
     const batch = { label: 'local diff', paths: [], diff: content };
     const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, undefined);
-    const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
+    const rawText = await callBackend(systemText, userText);
     parsed = parseReviewOrNeedsHuman(rawText, batch);
   }
   const findings = Array.isArray(parsed.findings) ? parsed.findings.slice(0, MAX_FINDINGS) : [];
@@ -382,7 +460,7 @@ async function reviewLocalDiff(diffFile, backend) {
     findings,
     could_not_verify: parsed.could_not_verify ?? [],
   }, null, 2)}\n`);
-  console.error(`[${backend}] local ${REVIEW_KIND} review verdict: ${parsed.verdict} (${findings.length} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})`);
+  console.error(`[${BACKEND}] local ${REVIEW_KIND} review verdict: ${parsed.verdict} (${findings.length} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})`);
   if (process.env.REVIEW_FAIL_ON && parsed.verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
 }
 
@@ -1152,9 +1230,12 @@ export {
   normalizeStateKind,
   reviewStateMatchesKind,
   localDiffPreflight,
+  normalizeBackend,
+  defaultReviewerId,
   REVIEW_KIND,
   REVIEW_MODE,
   REVIEW_PROFILE,
   MAX_FINDINGS,
   MAX_DIFF_CHARS,
+  BACKEND,
 };

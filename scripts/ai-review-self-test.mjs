@@ -5,9 +5,11 @@ import {
   MAX_FINDINGS,
   MAX_DIFF_CHARS,
   buildMissingPreviousReviewResult,
+  defaultReviewerId,
   findReviewCommentInList,
   localDiffPreflight,
   mergeReviewResults,
+  normalizeBackend,
   normalizeStateKind,
   parsePositiveInteger,
   parseReviewStateFromComment,
@@ -63,6 +65,21 @@ assert.equal(reviewStateMatchesKind({ kind: 'code' }, 'code'), true);
 assert.equal(reviewStateMatchesKind({ kind: 'proposal' }, 'code'), false);
 assert.equal(reviewStateMatchesKind({}, 'proposal'), false, 'legacy code state must not be reused as proposal context');
 assert.equal(reviewStateMatchesKind({ kind: 'proposal' }, 'proposal'), true);
+
+// Backend selection: accept the three known backends (case/space tolerant), reject anything else so a
+// typo fails fast instead of silently degrading to the metered api backend.
+assert.equal(normalizeBackend('api'), 'api');
+assert.equal(normalizeBackend('claude-cli'), 'claude-cli');
+assert.equal(normalizeBackend(' CODEX-CLI '), 'codex-cli');
+assert.throws(() => normalizeBackend('codex'), /invalid REVIEW_BACKEND/, 'unknown backend must throw, not fall back to api');
+
+// Per-backend comment-marker isolation: codex gets its own living comment so it never overwrites the
+// claude/api review on the same PR; claude-cli/api keep the historical default/proposal markers.
+assert.equal(defaultReviewerId('code', 'api'), 'default');
+assert.equal(defaultReviewerId('code', 'claude-cli'), 'default');
+assert.equal(defaultReviewerId('code', 'codex-cli'), 'codex');
+assert.equal(defaultReviewerId('proposal', 'api'), 'proposal');
+assert.equal(defaultReviewerId('proposal', 'codex-cli'), 'codex-proposal');
 
 // --diff-file safety preflight: empty/oversized local diffs must fail closed WITHOUT a backend call.
 assert.equal(localDiffPreflight('@@ small @@\n+ok', MAX_DIFF_CHARS), undefined, 'in-budget local diff is sent to the backend');

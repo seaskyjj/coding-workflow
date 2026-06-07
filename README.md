@@ -11,7 +11,8 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `WORKFLOW.md` | The methodology: PR sizing, finding→test rule, source-of-truth vs derived, CI gate, repo-management, three-party roles. Read this first. |
 | `reviewer/CHECKLIST.md` | The review lens — recurring bug classes (authz/tenant, contract drift, policy invariants, visual). What the AI reviewer is told to look for. |
 | `reviewer/review-prompt.md` | Prompt template fed to the AI reviewer (references CHECKLIST). |
-| `scripts/ai-review.mjs` | Self-contained reviewer: reads a PR diff, calls the **configured reviewer backend** (`claude-cli` subscription or `api`) with the checklist (+ optional project overlay), upserts one structured review comment, appends a `pr_log` record. |
+| `scripts/ai-review.mjs` | Self-contained reviewer: reads a PR diff, calls the **configured reviewer backend** (`claude-cli` / `codex-cli` subscription, or metered `api`) with the checklist (+ optional project overlay), upserts one structured review comment, appends a `pr_log` record. |
+| `scripts/reviewer-output.schema.json` | JSON Schema for the reviewer's structured output. Used by the `codex-cli` backend (`codex exec --output-schema`) to constrain the model's final answer to the review contract. |
 | `scripts/pr-log.mjs` | Generate/append `pr_log.jsonl` from GitHub (`gh`). Derived export — regenerable, never hand-maintained. |
 | `scripts/pr_log.schema.json` | Schema of one `pr_log.jsonl` record (for stats / validation). |
 | `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally; defaults to `deep` for first seen PR heads and `confirm-fixes` for later pushes to the same PR. |
@@ -27,10 +28,18 @@ It exists because process/orchestration tooling is cross-project and should not 
 
 ## Cost: subscription vs metered API
 
-The reviewer has two backends so you don't have to pay metered API for everything:
+The reviewer has three backends so you don't have to pay metered API for everything:
 
 - **`--backend claude-cli`** (default for `local-review.sh`): shells out to `claude -p` and uses your **Claude subscription (Pro/Max)** — no metered API key. Best run **locally** or on a **persistent self-hosted runner** where Claude Code is logged in. This is the cheapest path for a startup already paying for Max.
+- **`--backend codex-cli`**: shells out to `codex exec` and uses your **logged-in Codex/ChatGPT account** — no metered `OPENAI_API_KEY`. Same locality constraint: it needs `codex login` on the machine/runner, so run it **locally** or on a **persistent self-hosted runner**, not on GitHub-hosted Actions. It runs the reviewer turn in a **`read-only` sandbox** (the reviewer never edits files) and posts under its **own `codex` comment marker**, so Claude and Codex can both review the same PR without overwriting each other. This gives you the asymmetric "different agent reviews the implementer" property (see `WORKFLOW.md` §1) for free when Claude is the implementer.
 - **`--backend api`**: Anthropic Messages API, metered key. It remains supported for explicit manual use, but the GitHub Actions templates intentionally skip API review by default.
+
+Run a second, independent reviewer on a PR Claude opened:
+
+```bash
+# Claude implements + opens the PR; Codex reviews it from your Codex/ChatGPT subscription.
+REVIEW_BACKEND=codex-cli REVIEW_MODE=deep node scripts/ai-review.mjs --repo OWNER/REPO --pr PR_NUMBER
+```
 
 Practical split for a cost-conscious team:
 - **Non-AI gate (typecheck/test/lint/eval) needs NO key** and runs free in Actions — that's the real safety net.

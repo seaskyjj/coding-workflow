@@ -39,6 +39,7 @@ const API_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 const CLI_MODEL = process.env.CLAUDE_CLI_MODEL; // optional; else CLI default
 const REVIEW_MODE = normalizeReviewMode(arg('--review-mode') ?? process.env.REVIEW_MODE ?? 'deep');
 const REVIEW_PROFILE = normalizeReviewProfile(arg('--review-profile') ?? process.env.REVIEW_PROFILE ?? 'standard');
+const REVIEW_KIND = normalizeReviewKind(arg('--review-kind') ?? process.env.REVIEW_KIND ?? 'code');
 const MAX_DIFF_CHARS = parsePositiveInteger(process.env.MAX_DIFF_CHARS, 200000);
 const MAX_FINDINGS = parsePositiveInteger(process.env.MAX_FINDINGS, defaultMaxFindings(REVIEW_MODE, REVIEW_PROFILE));
 const REVIEW_SYNTHESIS_ENABLED = process.env.REVIEW_SYNTHESIS !== '0' && REVIEW_MODE === 'deep';
@@ -47,7 +48,9 @@ const REVIEW_CONTEXT_CHARS = parsePositiveInteger(process.env.REVIEW_CONTEXT_CHA
 const REVIEW_CONTEXT_LINES = parsePositiveInteger(process.env.REVIEW_CONTEXT_LINES, 80);
 const PR_LOG_PATH = process.env.PR_LOG_PATH ?? 'pr_log.jsonl';
 // reviewer-scoped marker so multiple AI reviewers (claude / codex) don't overwrite each other's comment.
-const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? 'default';
+// The default is also kind-scoped so a proposal review never upserts/overwrites the code-review living
+// comment (and vice versa). Code review keeps the historical `default` marker for backward compatibility.
+const REVIEWER_ID = process.env.REVIEW_COMMENT_ID ?? process.env.REVIEWER_ID ?? (REVIEW_KIND === 'proposal' ? 'proposal' : 'default');
 const MARKER = `<!-- ai-review:${REVIEWER_ID} -->`;
 const STATE_BEGIN = `<!-- ai-review-state:${REVIEWER_ID}`;
 const STATE_END = `ai-review-state:end -->`;
@@ -59,6 +62,25 @@ function arg(name) {
 }
 function hasArg(name) {
   return process.argv.includes(name);
+}
+function normalizeReviewKind(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['code', 'proposal'].includes(normalized)) return normalized;
+  throw new Error(`invalid REVIEW_KIND: ${value}. Expected code or proposal.`);
+}
+function normalizeStateKind(value) {
+  // Persisted review state (living comment + pr_log) records its kind; legacy/unknown state is
+  // treated as 'code' so older review comments/logs are not silently consumed by a proposal run.
+  return String(value ?? '').trim().toLowerCase() === 'proposal' ? 'proposal' : 'code';
+}
+function reviewStateMatchesKind(state, kind = REVIEW_KIND) {
+  return normalizeStateKind(state?.kind) === kind;
+}
+function reviewerSystemFile() {
+  return REVIEW_KIND === 'proposal' ? '../reviewer/PROPOSAL-CHECKLIST.md' : '../reviewer/CHECKLIST.md';
+}
+function reviewerPromptFile() {
+  return REVIEW_KIND === 'proposal' ? '../reviewer/proposal-review-prompt.md' : '../reviewer/review-prompt.md';
 }
 function normalizeReviewMode(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -170,7 +192,7 @@ function upsertComment(repo, pr, body) {
 function loadPreviousReviewContext(repo, pr) {
   const commentState = parseReviewStateFromComment(findExistingReviewComment(repo, pr)?.body);
   const logState = readLatestReviewStateFromLog(repo, pr);
-  if (commentState && !commentState.failedClosed) {
+  if (commentState && !commentState.failedClosed && reviewStateMatchesKind(commentState)) {
     return {
       source: commentState.headSha ? 'existing PR review comment' : 'existing PR review comment + PR_LOG_PATH headSha fallback',
       ...commentState,
@@ -212,8 +234,10 @@ function readLatestReviewStateFromLog(repo, pr) {
       const record = JSON.parse(lines[i]);
       if (String(record.repo) === String(repo) && String(record.pr) === String(pr) && record.review) {
         if (record.review.failedClosed) continue;
+        if (!reviewStateMatchesKind({ kind: record.review.kind })) continue;
         return {
           version: 1,
+          kind: normalizeStateKind(record.review.kind),
           verdict: record.review.verdict,
           summary: record.review.summary,
           findings: record.review.findings ?? [],
@@ -230,9 +254,14 @@ function readLatestReviewStateFromLog(repo, pr) {
 }
 
 async function review() {
+  const backend = arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api';
+  const diffFile = arg('--diff-file') ?? process.env.REVIEW_DIFF_FILE;
+  if (diffFile) {
+    await reviewLocalDiff(diffFile, backend);
+    return;
+  }
   const repo = arg('--repo') ?? process.env.GITHUB_REPOSITORY;
   const pr = arg('--pr') ?? process.env.PR_NUMBER;
-  const backend = arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api';
   if (!repo || !pr) throw new Error('need --repo owner/name and --pr N (or GITHUB_REPOSITORY/PR_NUMBER)');
 
   const meta = JSON.parse(gh(['pr', 'view', String(pr), '--repo', repo, '--json', 'title,body,baseRefName,headRefName,headRefOid']));
@@ -248,7 +277,7 @@ async function review() {
     return;
   }
 
-  let systemText = readSibling('../reviewer/CHECKLIST.md');
+  let systemText = readSibling(reviewerSystemFile());
   const overlay = resolveOverlay();
   if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
 
@@ -262,7 +291,7 @@ async function review() {
     return;
   }
 
-  const promptTemplate = readSibling('../reviewer/review-prompt.md');
+  const promptTemplate = readSibling(reviewerPromptFile());
   const reviewResults = [];
   for (const batch of diffPlan.batches) {
     const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, previousReview);
@@ -300,10 +329,67 @@ async function review() {
   if (process.env.REVIEW_FAIL_ON && verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
 }
 
+// Local-diff (`--diff-file`) safety preflight. The local path has no GitHub file-batch planning, so
+// guard the same MAX_DIFF_CHARS contract here instead of sending an unbounded diff to the backend:
+// an empty or oversized local diff returns a structured needs_human result and is NOT sent for review.
+function localDiffPreflight(content, maxChars = MAX_DIFF_CHARS) {
+  const chars = content.length;
+  if (chars === 0) {
+    const message = 'Local diff file was empty; nothing was sent to the backend, so no review was performed.';
+    return { verdict: 'needs_human', summary: message, findings: [], could_not_verify: [message] };
+  }
+  if (chars > maxChars) {
+    const message = `Local diff is ${chars} chars, above MAX_DIFF_CHARS=${maxChars}; it was NOT sent to the backend to avoid an unverifiable over-context/truncated review. Split the diff into smaller files or raise MAX_DIFF_CHARS, then re-run.`;
+    return { verdict: 'needs_human', summary: message, findings: [], could_not_verify: [message] };
+  }
+  return undefined;
+}
+
+async function reviewLocalDiff(diffFile, backend) {
+  const content = readFileSync(diffFile, 'utf8');
+  const preflight = localDiffPreflight(content, MAX_DIFF_CHARS);
+  let parsed;
+  let overlayApplied = false;
+  if (preflight) {
+    parsed = preflight;
+  } else {
+    const meta = {
+      title: arg('--title') ?? process.env.REVIEW_TITLE ?? `local ${REVIEW_KIND} review`,
+      body: arg('--body') ?? process.env.REVIEW_BODY ?? '',
+      baseRefName: 'LOCAL',
+      headRefName: 'LOCAL',
+    };
+    let systemText = readSibling(reviewerSystemFile());
+    const overlay = resolveOverlay();
+    if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
+    overlayApplied = overlay != null;
+    const promptTemplate = readSibling(reviewerPromptFile());
+    const diffPlan = { mode: 'full-diff', fullDiffChars: content.length, batches: [], omittedFiles: [], partial: false };
+    const batch = { label: 'local diff', paths: [], diff: content };
+    const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, undefined);
+    const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
+    parsed = parseReviewOrNeedsHuman(rawText, batch);
+  }
+  const findings = Array.isArray(parsed.findings) ? parsed.findings.slice(0, MAX_FINDINGS) : [];
+  process.stdout.write(`${JSON.stringify({
+    kind: REVIEW_KIND,
+    mode: REVIEW_MODE,
+    profile: REVIEW_PROFILE,
+    overlay: overlayApplied,
+    diffFile,
+    verdict: parsed.verdict,
+    summary: parsed.summary,
+    findings,
+    could_not_verify: parsed.could_not_verify ?? [],
+  }, null, 2)}\n`);
+  console.error(`[${backend}] local ${REVIEW_KIND} review verdict: ${parsed.verdict} (${findings.length} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})`);
+  if (process.env.REVIEW_FAIL_ON && parsed.verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
+}
+
 function appendReviewRecord(repo, pr, parsed, rounds, backend, hasOverlay) {
   const record = buildPrRecord(repo, pr);
   record.head_sha = parsed.reviewedHeadSha ?? record.head_sha;
-  record.review = { verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
+  record.review = { kind: REVIEW_KIND, verdict: parsed.verdict, summary: parsed.summary, rounds, backend, overlay: hasOverlay, mode: REVIEW_MODE, profile: REVIEW_PROFILE,
     failedClosed: parsed.failedClosed === true,
     reviewedHeadSha: parsed.reviewedHeadSha ?? record.head_sha,
     previousReviewedHead: parsed.previousReviewedHead ?? null,
@@ -949,6 +1035,7 @@ function summarizeDiffPlan(diffPlan) {
     currentHeadSha: diffPlan.currentHeadSha,
     fullDiffChars: diffPlan.fullDiffChars,
     maxDiffChars: MAX_DIFF_CHARS,
+    reviewKind: REVIEW_KIND,
     reviewMode: REVIEW_MODE,
     reviewProfile: REVIEW_PROFILE,
     maxFindings: MAX_FINDINGS,
@@ -991,7 +1078,7 @@ function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousRevi
     MARKER,
     state,
     `## 🤖 AI review — verdict: \`${parsed.verdict}\``,
-    `Mode: \`${REVIEW_MODE}\` · Profile: \`${REVIEW_PROFILE}\` · Finding cap: \`${MAX_FINDINGS}\``,
+    `Kind: \`${REVIEW_KIND}\` · Mode: \`${REVIEW_MODE}\` · Profile: \`${REVIEW_PROFILE}\` · Finding cap: \`${MAX_FINDINGS}\``,
     scopeLine,
     parsed.summary ? `\n${parsed.summary}\n` : '',
     diffPlan.partial ? '> ⚠️ one or more file patches were unavailable or over the size cap — review is **partial**, forced to `needs_human`.\n' : '',
@@ -1017,6 +1104,7 @@ function renderComment(parsed, diffPlan, hasOverlay, backend, meta, previousRevi
 function renderReviewState(parsed, meta, diffPlan, previousReview) {
   const state = {
     version: 1,
+    kind: REVIEW_KIND,
     reviewerId: REVIEWER_ID,
     reviewMode: REVIEW_MODE,
     reviewProfile: REVIEW_PROFILE,
@@ -1061,7 +1149,12 @@ export {
   buildFilePatchDiffPlan,
   shouldRunSynthesis,
   shouldFailClosedWithoutPreviousReview,
+  normalizeStateKind,
+  reviewStateMatchesKind,
+  localDiffPreflight,
+  REVIEW_KIND,
   REVIEW_MODE,
   REVIEW_PROFILE,
   MAX_FINDINGS,
+  MAX_DIFF_CHARS,
 };

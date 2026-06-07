@@ -27,6 +27,7 @@
     "review": {
       "type": "object",
       "properties": {
+        "kind": { "type": "string", "enum": ["code", "proposal"], "description": "review kind: code = code-diff review (default for legacy records without this field), proposal = design/decision/ADR reasoning review" },
         "verdict": { "type": "string", "enum": ["approve", "approve_after_fixes", "request_changes", "needs_human"] },
         "summary": { "type": "string" },
         "rounds": { "type": "integer", "description": "how many review iterations" },
@@ -41,7 +42,7 @@
             "required": ["severity", "area", "issue"],
             "properties": {
               "severity": { "type": "string", "enum": ["high", "med", "low"] },
-              "area": { "type": "string", "enum": ["A_authz", "B_contract", "C_policy", "D_visual", "E_reliability", "other"] },
+              "area": { "type": "string", "enum": ["A_authz", "B_contract", "C_policy", "D_visual", "E_reliability", "other", "R1_argument", "R2_rootcause_fix", "R3_disconfirm", "R4_alternatives", "R5_metric_gaming", "R6_domain", "R7_scope", "R8_honesty"], "description": "code-review areas (A_*..E_*/other) or proposal-review reasoning lenses (R1_*..R8_*)" },
               "location": { "type": "string" },
               "issue": { "type": "string" },
               "turned_into_test": { "type": ["string", "null"], "description": "path::testname of the regression test, or null if not yet" },

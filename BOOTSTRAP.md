@@ -83,6 +83,20 @@ REVIEW_MODE=gate REVIEW_PROFILE=pilot_minimal MAX_FINDINGS=5 node "$AI_REVIEW_SC
 
 For `gate` and `confirm-fixes`, the reviewer uses the previous review state's `headSha` and reviews only `previousReviewedHead...currentHead` plus previous findings. `confirm-fixes` also includes bounded current-file context around previous finding locations. If no previous `headSha` exists, these modes fail closed with `needs_human`.
 
+Use `REVIEW_KIND` to choose what is reviewed (orthogonal to mode/profile):
+```bash
+# Default: code-diff review against reviewer/CHECKLIST.md.
+node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# Proposal/design review against reviewer/PROPOSAL-CHECKLIST.md — for ADRs, design docs,
+# investigation write-ups, and next-step direction docs (pressure-tests reasoning, not prose).
+REVIEW_KIND=proposal node "$AI_REVIEW_SCRIPT" --repo "$REPO" --pr "$PR"
+
+# No-PR local diff (prints JSON; writes no comment/log). Empty or >MAX_DIFF_CHARS → needs_human.
+REVIEW_KIND=proposal node "$AI_REVIEW_SCRIPT" --diff-file /tmp/direction.diff
+```
+On the same PR, code and proposal reviews keep separate living comments / `pr_log` entries (code uses the `default` marker, proposal defaults to `proposal`); only same-kind previous state is reused. Set a distinct `REVIEW_COMMENT_ID` to run two reviews of the same kind side by side.
+
 For GitHub Actions, the template intentionally skips metered API review by default. Request `pilot_minimal` with the PR label `review:pilot-minimal` as documentation of intent, but do not set it as a repository-wide default.
 
 If the plan or review says a file patch was omitted or oversized, inspect that file explicitly:

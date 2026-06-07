@@ -39,6 +39,7 @@ const API_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5';
 const CLI_MODEL = process.env.CLAUDE_CLI_MODEL; // optional; else CLI default
 const REVIEW_MODE = normalizeReviewMode(arg('--review-mode') ?? process.env.REVIEW_MODE ?? 'deep');
 const REVIEW_PROFILE = normalizeReviewProfile(arg('--review-profile') ?? process.env.REVIEW_PROFILE ?? 'standard');
+const REVIEW_KIND = normalizeReviewKind(arg('--review-kind') ?? process.env.REVIEW_KIND ?? 'code');
 const MAX_DIFF_CHARS = parsePositiveInteger(process.env.MAX_DIFF_CHARS, 200000);
 const MAX_FINDINGS = parsePositiveInteger(process.env.MAX_FINDINGS, defaultMaxFindings(REVIEW_MODE, REVIEW_PROFILE));
 const REVIEW_SYNTHESIS_ENABLED = process.env.REVIEW_SYNTHESIS !== '0' && REVIEW_MODE === 'deep';
@@ -59,6 +60,17 @@ function arg(name) {
 }
 function hasArg(name) {
   return process.argv.includes(name);
+}
+function normalizeReviewKind(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['code', 'proposal'].includes(normalized)) return normalized;
+  throw new Error(`invalid REVIEW_KIND: ${value}. Expected code or proposal.`);
+}
+function reviewerSystemFile() {
+  return REVIEW_KIND === 'proposal' ? '../reviewer/PROPOSAL-CHECKLIST.md' : '../reviewer/CHECKLIST.md';
+}
+function reviewerPromptFile() {
+  return REVIEW_KIND === 'proposal' ? '../reviewer/proposal-review-prompt.md' : '../reviewer/review-prompt.md';
 }
 function normalizeReviewMode(value) {
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -230,9 +242,14 @@ function readLatestReviewStateFromLog(repo, pr) {
 }
 
 async function review() {
+  const backend = arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api';
+  const diffFile = arg('--diff-file') ?? process.env.REVIEW_DIFF_FILE;
+  if (diffFile) {
+    await reviewLocalDiff(diffFile, backend);
+    return;
+  }
   const repo = arg('--repo') ?? process.env.GITHUB_REPOSITORY;
   const pr = arg('--pr') ?? process.env.PR_NUMBER;
-  const backend = arg('--backend') ?? process.env.REVIEW_BACKEND ?? 'api';
   if (!repo || !pr) throw new Error('need --repo owner/name and --pr N (or GITHUB_REPOSITORY/PR_NUMBER)');
 
   const meta = JSON.parse(gh(['pr', 'view', String(pr), '--repo', repo, '--json', 'title,body,baseRefName,headRefName,headRefOid']));
@@ -248,7 +265,7 @@ async function review() {
     return;
   }
 
-  let systemText = readSibling('../reviewer/CHECKLIST.md');
+  let systemText = readSibling(reviewerSystemFile());
   const overlay = resolveOverlay();
   if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
 
@@ -262,7 +279,7 @@ async function review() {
     return;
   }
 
-  const promptTemplate = readSibling('../reviewer/review-prompt.md');
+  const promptTemplate = readSibling(reviewerPromptFile());
   const reviewResults = [];
   for (const batch of diffPlan.batches) {
     const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, previousReview);
@@ -298,6 +315,39 @@ async function review() {
   const verdict = parsed?.verdict ?? 'needs_human';
   console.error(`[${backend}] verdict: ${verdict} (${parsed?.findings?.length ?? '?'} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})${isFileBatched(diffPlan) ? ` [${diffPlan.batches.length} file batch(es)]` : ''}${diffPlan.partial ? ' [PARTIAL→needs_human]' : ''} -> ${repo}#${pr}`);
   if (process.env.REVIEW_FAIL_ON && verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
+}
+
+async function reviewLocalDiff(diffFile, backend) {
+  const content = readFileSync(diffFile, 'utf8');
+  const meta = {
+    title: arg('--title') ?? process.env.REVIEW_TITLE ?? `local ${REVIEW_KIND} review`,
+    body: arg('--body') ?? process.env.REVIEW_BODY ?? '',
+    baseRefName: 'LOCAL',
+    headRefName: 'LOCAL',
+  };
+  let systemText = readSibling(reviewerSystemFile());
+  const overlay = resolveOverlay();
+  if (overlay) systemText += `\n\n# Project overlay (repo-specific rules — apply in addition to the above)\n\n${overlay}`;
+  const promptTemplate = readSibling(reviewerPromptFile());
+  const diffPlan = { mode: 'full-diff', fullDiffChars: content.length, batches: [], omittedFiles: [], partial: false };
+  const batch = { label: 'local diff', paths: [], diff: content };
+  const userText = buildReviewUserText(promptTemplate, meta, batch, diffPlan, undefined);
+  const rawText = backend === 'claude-cli' ? callClaudeCli(systemText, userText) : await callApi(systemText, userText);
+  const parsed = parseReviewOrNeedsHuman(rawText, batch);
+  const findings = Array.isArray(parsed.findings) ? parsed.findings.slice(0, MAX_FINDINGS) : [];
+  process.stdout.write(`${JSON.stringify({
+    kind: REVIEW_KIND,
+    mode: REVIEW_MODE,
+    profile: REVIEW_PROFILE,
+    overlay: overlay != null,
+    diffFile,
+    verdict: parsed.verdict,
+    summary: parsed.summary,
+    findings,
+    could_not_verify: parsed.could_not_verify ?? [],
+  }, null, 2)}\n`);
+  console.error(`[${backend}] local ${REVIEW_KIND} review verdict: ${parsed.verdict} (${findings.length} findings; mode=${REVIEW_MODE}; profile=${REVIEW_PROFILE})`);
+  if (process.env.REVIEW_FAIL_ON && parsed.verdict === process.env.REVIEW_FAIL_ON) process.exit(1);
 }
 
 function appendReviewRecord(repo, pr, parsed, rounds, backend, hasOverlay) {

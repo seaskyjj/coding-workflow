@@ -115,6 +115,8 @@ When both kinds run on the **same PR**, they do not collide: the default comment
 
 `--diff-file` reviews a raw local diff with no GitHub file-batch planning, so it enforces the same `MAX_DIFF_CHARS` contract directly: an empty or over-cap diff returns `needs_human` and is **not** sent to the backend (no silent approval of a truncated/over-context review).
 
+Because a PR proposal review sees only the changed hunks, the prompt fails closed (`needs_human`) when a changed hunk depends on surrounding context not in the diff (earlier definitions, the full set of options, cited evidence, metric definitions) rather than approving a partial argument. Re-run against the full document (e.g. `--diff-file` with the whole doc) when that happens. The argument shape the reviewer reconstructs is chosen per artifact type — investigation/fix vs decision/ADR vs knowledge/methodology — not forced into one template.
+
 ## Two boundaries that must hold
 
 - **AI review is additive; the non-AI gate is the safety net.** typecheck/test/lint/eval-gate run independently of any AI judgment. If the AI reviewer misses something, the gate still stands.

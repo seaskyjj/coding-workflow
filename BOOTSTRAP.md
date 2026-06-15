@@ -3,10 +3,12 @@
 ## 0. Host this repo
 Push `coding-workflow` to GitHub (e.g. `seaskyjj/coding-workflow`). Product repos reference it by name.
 
-## 1. Local smoke (no Actions, no metered API key — uses your Claude subscription)
-Requires `claude` (Claude Code) logged in with your Pro/Max plan, and `gh` authed.
+## 1. Local smoke (no Actions, no metered API key — uses a logged-in CLI subscription)
+Requires `gh` plus the selected reviewer CLI logged in (`codex` for `codex-cli`, `claude` for `claude-cli`).
 ```bash
-# Review the current product-repo PR via subscription (claude-cli backend).
+# Review the current product-repo PR via subscription CLI.
+# Default assumes Claude implemented the PR, so Codex/ChatGPT reviews it.
+# Set REVIEW_BACKEND=claude-cli when Codex implemented the PR.
 # Run inside the product repo; override CODING_WORKFLOW if the tooling checkout
 # is not at $HOME/Programs/coding-workflow.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -14,45 +16,58 @@ REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || tru
 PR="$(gh pr view --json number --jq .number 2>/dev/null || true)"
 CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
 AI_REVIEW_SCRIPT="$CODING_WORKFLOW/scripts/ai-review.mjs"
+REVIEW_BACKEND="${REVIEW_BACKEND:-codex-cli}"
+REVIEW_KIND="${REVIEW_KIND:-code}"
 
 if [ ! -f "$AI_REVIEW_SCRIPT" ]; then
-  echo "ai-review.mjs not found; skipping local Claude review. CODING_WORKFLOW=$CODING_WORKFLOW"
+  echo "ai-review.mjs not found; skipping local AI review. CODING_WORKFLOW=$CODING_WORKFLOW"
 elif [ -z "$REPO" ]; then
-  echo "No GitHub repo found for this checkout; skipping local Claude review."
+  echo "No GitHub repo found for this checkout; skipping local AI review."
 elif [ -z "$PR" ]; then
-  echo "No open PR found for the current branch; skipping local Claude review."
-elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+  echo "No open PR found for the current branch; skipping local AI review."
+elif [ "$REVIEW_BACKEND" = "codex-cli" ] && ! { command -v codex >/dev/null && codex --version >/dev/null 2>&1; }; then
+  echo "codex CLI unavailable; set REVIEW_BACKEND=claude-cli or run manual review."
+elif [ "$REVIEW_BACKEND" = "claude-cli" ] && ! { command -v claude >/dev/null && claude --version >/dev/null 2>&1; }; then
+  echo "claude CLI unavailable; set REVIEW_BACKEND=codex-cli or run manual review."
+elif [ "$REVIEW_BACKEND" = "api" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ANTHROPIC_API_KEY missing; set REVIEW_BACKEND=codex-cli/claude-cli or add the key only after explicit opt-in."
+else
   REVIEW_MODE="${REVIEW_MODE:-deep}" \
   REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
   MAX_FINDINGS="${MAX_FINDINGS:-12}" \
-  REVIEW_COMMENT_ID=claude-cli \
+  REVIEW_BACKEND="$REVIEW_BACKEND" \
+  REVIEW_KIND="$REVIEW_KIND" \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
-  node "$AI_REVIEW_SCRIPT" --backend claude-cli --repo "$REPO" --pr "$PR"
-else
-  echo "claude CLI unavailable; rely on manual review plus the non-AI gate."
+  node "$AI_REVIEW_SCRIPT" --backend "$REVIEW_BACKEND" --review-kind "$REVIEW_KIND" --repo "$REPO" --pr "$PR"
 fi
 
-# Poll for new PRs (defaults to claude-cli = subscription). Without an explicit
+# Poll for new PRs. Default here assumes Claude implemented the PR, so Codex reviews it.
+# Set REVIEW_BACKEND=claude-cli when Codex implemented the PR. Without an explicit
 # REVIEW_MODE override, the poller uses deep for the first seen head of a PR and
 # confirm-fixes for later pushes to the same PR.
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
 CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
 LOCAL_REVIEW_SCRIPT="$CODING_WORKFLOW/scripts/local-review.sh"
+REVIEW_BACKEND="${REVIEW_BACKEND:-codex-cli}"
 if [ ! -f "$LOCAL_REVIEW_SCRIPT" ]; then
   echo "local-review.sh not found; skipping poller. CODING_WORKFLOW=$CODING_WORKFLOW"
 elif [ -z "$REPO" ]; then
   echo "No GitHub repo found for this checkout; skipping poller."
-elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+elif [ "$REVIEW_BACKEND" = "codex-cli" ] && ! { command -v codex >/dev/null && codex --version >/dev/null 2>&1; }; then
+  echo "codex CLI unavailable; set REVIEW_BACKEND=claude-cli or REVIEW_BACKEND=api before running the poller."
+elif [ "$REVIEW_BACKEND" = "claude-cli" ] && ! { command -v claude >/dev/null && claude --version >/dev/null 2>&1; }; then
+  echo "claude CLI unavailable; set REVIEW_BACKEND=codex-cli or REVIEW_BACKEND=api before running the poller."
+elif [ "$REVIEW_BACKEND" = "api" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ANTHROPIC_API_KEY missing; skipping API poller unless the team explicitly opts into metered review."
+else
   REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
-  REVIEW_COMMENT_ID=claude-cli \
+  REVIEW_BACKEND="$REVIEW_BACKEND" \
   REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
   PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
   LOCAL_REVIEW_STATE="${TMPDIR:-/tmp}/coding-workflow-local-review-state" \
   "$LOCAL_REVIEW_SCRIPT" "$REPO" 120
-else
-  echo "claude CLI unavailable; skipping poller unless REVIEW_BACKEND=api is configured manually."
 fi
 ```
 To use the metered API instead for an explicit manual run: `REVIEW_BACKEND=api ANTHROPIC_API_KEY=sk-ant-... node .../ai-review.mjs --repo ... --pr ...`.
@@ -115,7 +130,7 @@ Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root*
 1. If `coding-workflow` is private, add `CODING_WORKFLOW_TOKEN`; no Anthropic API key is required for the default Action.
 2. Copy `templates/consumer-ai-review.yml` → product `.github/workflows/ai-review.yml`; set the `repository:` field to your coding-workflow location.
 3. Copy `templates/consumer-ci.yml` → product `.github/workflows/ci.yml`; adjust commands (typecheck/lint/test + project gates like eval / visual).
-4. Open a PR — GitHub Actions run the no-key workflow checks and non-AI gate. Run local `claude-cli` review for the deep / confirm-fixes / gate AI rounds.
+4. Open a PR — GitHub Actions run the no-key workflow checks and non-AI gate. Run local independent CLI review (`codex-cli` for Claude-implemented PRs, `claude-cli` for Codex-implemented PRs) for the deep / confirm-fixes / gate AI rounds.
 
 ## 3. Operating rules (see WORKFLOW.md)
 - One capability per PR; leave `main` green; revertable.

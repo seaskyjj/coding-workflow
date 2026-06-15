@@ -4,7 +4,8 @@
 # seaskyjj/coding-workflow public, OR set
 #      CODING_WORKFLOW_TOKEN (the default GITHUB_TOKEN cannot read other repos);
 # GitHub Action API AI review is intentionally skipped by default. Run local
-# claude-cli review for deep/gate/confirm-fixes rounds.
+# independent CLI review for deep/gate/confirm-fixes rounds: codex-cli when
+# Claude implemented the PR, claude-cli when Codex implemented it.
 # Edit the `repository:` value to your coding-workflow location.
 name: ai-review
 on:
@@ -58,4 +59,4 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
       - name: API review skipped
         if: steps.tools.outcome == 'success'
-        run: echo "::notice::GitHub Action API AI review is intentionally disabled. Run local claude-cli review for deep/gate/confirm-fixes rounds."
+        run: echo "::notice::GitHub Action API AI review is intentionally disabled. Run local independent CLI review (codex-cli or claude-cli) for deep/gate/confirm-fixes rounds."

@@ -37,7 +37,7 @@ Large PRs should still be reviewed through complete evidence, not a truncated co
 
 Temporary or pilot-only work can use `REVIEW_PROFILE=pilot_minimal` to keep review fast. In GitHub Actions this should be a per-PR signal, such as the `review:pilot-minimal` label used by the template, not a sticky repository variable. That profile does not waive the safety floor: auth/tenant/secret/PII boundaries, fail-closed behavior, obvious runtime breakage, minimum tests, and honest "implemented / partial / not production" labeling still matter. It only deprioritizes production-scale hardening and low-value polish until the pilot graduates.
 
-GitHub Actions should run the non-AI gate and lightweight workflow checks by default. Metered API AI review is intentionally disabled in the templates until a repo explicitly opts back in; local `claude-cli` review is the default AI review path while cost and cadence are being tuned.
+GitHub Actions should run the non-AI gate and lightweight workflow checks by default. Metered API AI review is intentionally disabled in the templates until a repo explicitly opts back in; local CLI review (`codex-cli` when Claude implemented the PR, `claude-cli` when Codex implemented it) is the default AI review path while cost and cadence are being tuned.
 
 ## 4. The loop
 

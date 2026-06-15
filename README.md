@@ -17,7 +17,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `scripts/pr_log.schema.json` | Schema of one `pr_log.jsonl` record (for stats / validation). |
 | `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally; defaults to `deep` for first seen PR heads and `confirm-fixes` for later pushes to the same PR. |
 | `.github/workflows/ai-review.yml` | This repo's own no-key PR review workflow (also serves as a working example). |
-| `templates/consumer-ai-review.yml` | Drop into a **product repo** `.github/workflows/` for no-key review workflow checks; local `claude-cli` remains the default AI review path. |
+| `templates/consumer-ai-review.yml` | Drop into a **product repo** `.github/workflows/` for no-key review workflow checks; local CLI review (`codex-cli` / `claude-cli`) remains the default AI review path. |
 | `templates/consumer-ci.yml` | The **non-AI gate** (typecheck/test/lint/eval) a product repo must run — the real safety net. |
 | `BOOTSTRAP.md` | How to adopt this in a new or existing product repo. |
 | `ADOPT-PROMPT.md` | Copy-paste prompt for asking an agent to adopt this workflow in another product repo. |
@@ -43,7 +43,7 @@ REVIEW_BACKEND=codex-cli REVIEW_MODE=deep node scripts/ai-review.mjs --repo OWNE
 
 Practical split for a cost-conscious team:
 - **Non-AI gate (typecheck/test/lint/eval) needs NO key** and runs free in Actions — that's the real safety net.
-- **AI review locally via `claude-cli`** (subscription) while volume is low / you trigger it yourself.
+- **AI review locally via subscription CLI** (`codex-cli` for Claude-implemented PRs, `claude-cli` for Codex-implemented PRs) while volume is low / you trigger it yourself.
 - Keep **GitHub Action API review disabled by default** while cost and review cadence are being tuned. If you later opt into fully unattended CI review, keep it explicit and bounded: only non-draft PRs, `MAX_DIFF_CHARS` capped, and a deliberate model choice.
 
 ## Large PR diff handling

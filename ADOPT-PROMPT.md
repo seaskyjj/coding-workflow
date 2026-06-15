@@ -5,7 +5,7 @@ Copy everything in the fenced block below into an agent (Claude Code / codex) ru
 ````
 Adopt the reusable engineering workflow from the repo `seaskyjj/coding-workflow` into THIS project. Do not copy/vendor its scripts — reference it; only add small consumer config here.
 
-FIRST, read these from coding-workflow (clone/fetch or read on GitHub): WORKFLOW.md, BOOTSTRAP.md, reviewer/CHECKLIST.md, templates/consumer-ci.yml, templates/consumer-ai-review.yml. Follow WORKFLOW.md's principles (source-of-truth vs derived; PR sizing; finding→test; branch hygiene; AI-review-yes/auto-merge-no; non-AI gate is the safety net).
+FIRST, read these from coding-workflow (clone/fetch or read on GitHub): WORKFLOW.md, BOOTSTRAP.md, reviewer/CHECKLIST.md, reviewer/PROPOSAL-CHECKLIST.md, templates/consumer-ci.yml, templates/consumer-ai-review.yml. Follow WORKFLOW.md's principles (source-of-truth vs derived; PR sizing; finding→test; branch hygiene; asymmetric AI review; AI-review-yes/auto-merge-no; non-AI gate is the safety net).
 
 THEN inspect THIS repo and do the following, opening ONE pull request (do not push to main directly):
 
@@ -15,11 +15,11 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    - if any test shells out to system tools (e.g. ffmpeg), install them in the job (symptom: `spawn <tool> ENOENT`);
    - leave eval/visual/e2e gates commented unless they actually exist and can pass.
 
-2. .github/workflows/ai-review.yml — copy templates/consumer-ai-review.yml; set `repository:` to the tooling repo; keep the graceful-degrade guards and concurrency as-is. The default Action intentionally skips metered API AI review; local `claude-cli` remains the default AI review path.
+2. .github/workflows/ai-review.yml — copy templates/consumer-ai-review.yml; set `repository:` to the tooling repo; keep the graceful-degrade guards and concurrency as-is. The default Action intentionally skips metered API AI review; run local independent CLI review for deep/gate/confirm-fixes rounds (`codex-cli` when Claude implemented the PR, `claude-cli` when Codex implemented it).
 
 3. reviewer-overlay.md at the repo ROOT — write PROJECT-SPECIFIC review rules for THIS codebase (do NOT copy another project's overlay). Derive them from this repo's real invariants: read its ADRs/requirements/docs and the code, and encode the bug classes that would actually hurt here (authz/tenant boundaries, user-visible vs internal data, fail-closed rules, contract/snapshot sync, provenance, dev-only-not-in-prod, visual/responsive). Keep it tight; each rule should be checkable with `file:line` + a test.
 
-4. If this repo has an agent instruction file (for example AGENTS.md, CLAUDE.md, or similar), add a small "PR Review Workflow" section. It should tell future agents to run a local cross-model Claude review after they create a PR when `claude` CLI is installed and logged in. Use a cwd-independent, configurable script path; do NOT hardcode `/Users/.../coding-workflow`:
+4. If this repo has an agent instruction file (for example AGENTS.md, CLAUDE.md, or similar), add a small "PR Review Workflow" section. It should tell future agents to run a local independent AI review after they create a PR, choosing a reviewer backend different from the implementer when possible. Default to `codex-cli` for PRs implemented by Claude, and use `claude-cli` for PRs implemented by Codex. Use a cwd-independent, configurable script path; do NOT hardcode `/Users/.../coding-workflow`:
 
    ```bash
    REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -27,23 +27,30 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    PR="$(gh pr view --json number --jq .number 2>/dev/null || true)"
    CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
    AI_REVIEW_SCRIPT="$CODING_WORKFLOW/scripts/ai-review.mjs"
+   REVIEW_BACKEND="${REVIEW_BACKEND:-codex-cli}"   # Claude implementer -> codex-cli; Codex implementer -> claude-cli.
+   REVIEW_KIND="${REVIEW_KIND:-code}"              # Use proposal for ADRs/design docs/investigations.
 
    if [ ! -f "$AI_REVIEW_SCRIPT" ]; then
-     echo "ai-review.mjs not found; skipping local Claude review. CODING_WORKFLOW=$CODING_WORKFLOW"
+     echo "ai-review.mjs not found; skipping local AI review. CODING_WORKFLOW=$CODING_WORKFLOW"
    elif [ -z "$REPO" ]; then
-     echo "No GitHub repo found for this checkout; skipping local Claude review."
+     echo "No GitHub repo found for this checkout; skipping local AI review."
    elif [ -z "$PR" ]; then
-     echo "No open PR found for the current branch; skipping local Claude review."
-   elif command -v claude >/dev/null && claude --version >/dev/null 2>&1; then
+     echo "No open PR found for the current branch; skipping local AI review."
+   elif [ "$REVIEW_BACKEND" = "codex-cli" ] && ! { command -v codex >/dev/null && codex --version >/dev/null 2>&1; }; then
+     echo "codex CLI unavailable; set REVIEW_BACKEND=claude-cli or run manual review."
+   elif [ "$REVIEW_BACKEND" = "claude-cli" ] && ! { command -v claude >/dev/null && claude --version >/dev/null 2>&1; }; then
+     echo "claude CLI unavailable; set REVIEW_BACKEND=codex-cli or run manual review."
+   elif [ "$REVIEW_BACKEND" = "api" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+     echo "ANTHROPIC_API_KEY missing; set REVIEW_BACKEND=codex-cli/claude-cli or add the key only after explicit opt-in."
+   else
      REVIEW_MODE="${REVIEW_MODE:-deep}" \
      REVIEW_PROFILE="${REVIEW_PROFILE:-standard}" \
      MAX_FINDINGS="${MAX_FINDINGS:-12}" \
-     REVIEW_COMMENT_ID=claude-cli \
+     REVIEW_BACKEND="$REVIEW_BACKEND" \
+     REVIEW_KIND="$REVIEW_KIND" \
      REVIEWER_OVERLAY="$REPO_ROOT/reviewer-overlay.md" \
      PR_LOG_PATH="${TMPDIR:-/tmp}/coding-workflow-pr-log.local.jsonl" \
-     node "$AI_REVIEW_SCRIPT" --backend claude-cli --repo "$REPO" --pr "$PR"
-   else
-     echo "claude CLI unavailable; rely on manual review."
+     node "$AI_REVIEW_SCRIPT" --backend "$REVIEW_BACKEND" --review-kind "$REVIEW_KIND" --repo "$REPO" --pr "$PR"
    fi
    ```
 
@@ -57,12 +64,14 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
 6. Verify and report:
    - the ci gate must pass on the PR (fix real failures it surfaces — that's the point; turn any fix into a test where applicable);
    - the ai-review job should run its no-key checks and skip API AI review gracefully (green).
-   - if local `claude` CLI is available and logged in, run the local review command from step 4 once after opening the PR; if it is unavailable, report that explicitly instead of fabricating review status.
+   - if the local reviewer CLI selected in step 4 is available and logged in, run the local review command once after opening the PR; if it is unavailable, report that explicitly instead of fabricating review status.
+   - for ADRs, design docs, investigations, and next-step direction docs, run a proposal review once with `REVIEW_KIND=proposal`; for mixed code+proposal PRs, run both review kinds.
 
 FINALLY, tell the human the prerequisites only THEY can do (you cannot): 
    (a) enable the repo setting "Automatically delete head branches"; 
    (b) add CODING_WORKFLOW_TOKEN if the tooling repo is private, or make it public;
-   (c) only add ANTHROPIC_API_KEY / ANTHROPIC_MODEL later if the team explicitly opts back into metered API AI review.
+   (c) run `codex login` or `claude` login on any local/self-hosted runner used for subscription CLI review;
+   (d) only add ANTHROPIC_API_KEY / ANTHROPIC_MODEL later if the team explicitly opts back into metered API AI review.
 
 Boundaries: do not embed/vendor the tooling; do not implement auto-merge; do not write secrets into the repo; do not fabricate passing status or data; the non-AI gate is the real safety net and must run independently of any AI.
 ````

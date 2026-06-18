@@ -30,7 +30,9 @@ assert.ok(!redacted.includes('abc123'));
 assert.ok(!redacted.includes('APP_SECRET=value'));
 assert.ok(!redact('token is ghp_abcdEFGH1234567890abcdEFGH1234567890').includes('ghp_abcd'));
 assert.ok(!redact('aws key AKIAABCDEFGHIJKLMNOP here').includes('AKIAABCDEFGHIJKLMNOP'));
+assert.ok(!redact('aws_secret_key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY').includes('wJalrXUtnFEMI'));
 assert.ok(!redact('jwt eyJabcdefghiJKL.eyJmnopqrstuvwxyz.ABCDEFGHIJKLMNOP').includes('eyJabcdefghiJKL'));
+assert.ok(!redact('https://example.test/files/abcdefghijklmnopqrstuvwxyzABCDEF/download').includes('abcdefghijklmnopqrstuvwxyzABCDEF'));
 
 // Local gate: missing env on a required step produces partial/skipped, not pass.
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'coding-workflow-cicd-test-'));

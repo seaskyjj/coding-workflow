@@ -1,12 +1,12 @@
 # CI/CD and deploy workflow proposal
 
-Status: accepted design record; implemented by the scripts, templates, docs, and skill template in this repository.
+Status: implemented design record; reusable-shape validation still pending.
 
-This document describes how `coding-workflow` extends from PR review tooling into a reusable CI/CD and staging-deploy workflow. It remains the design record; current behavior is defined by the referenced scripts, templates, tests, and skill template.
+This document describes how `coding-workflow` extends from PR review tooling into a reusable CI/CD and staging-deploy workflow. It remains the design record; current behavior is defined by the referenced scripts, templates, tests, and skill template. The extraction is implemented, but cross-product reuse is still a hypothesis until TrainOS adopts this repo as an external consumer, or a second product repo adopts it without shared-script/template changes.
 
 ## Why this belongs in `coding-workflow`
 
-Several product repos need the same operating loop:
+The extraction is based on one concrete product experience, TrainOS. The hypothesis is that other product repos with the same operating loop can reuse the mechanism:
 
 1. GitHub hosted Actions sometimes fail or are unavailable.
 2. A local or self-hosted non-AI gate is still needed to keep PRs moving.
@@ -14,7 +14,13 @@ Several product repos need the same operating loop:
 4. The deploy output must be auditable: commit deployed, service status, health result, smoke result, log locations, rollback ref, and clear production vs staging boundary.
 5. Agents need one standard skill/instruction path to run this without inventing commands per repo.
 
-TrainOS has already proven these needs in a concrete product. The reusable parts should move here; the TrainOS-specific commands, services, ports, and success markers should remain project adapter configuration in TrainOS.
+TrainOS has proven these needs for one concrete product. The reusable parts moved here as mechanism; TrainOS-specific commands, services, ports, and success markers remain product adapter configuration. This document does not claim that multi-product reuse is proven yet.
+
+Validation still required before calling the abstraction stable:
+
+- adopt this tooling back into TrainOS as an external consumer that references `coding-workflow` instead of vendoring it;
+- or adopt it into a second product repo with only `.coding-workflow/*.json` config and wrappers;
+- record any required shared-script/template changes as evidence that the mechanism/policy split was incomplete.
 
 ## Core principle
 
@@ -97,7 +103,7 @@ Required properties:
 - A required missing-env skip yields `partial` evidence and a non-zero local gate exit; local gates do not currently define any other skip path.
 - Missing env skip must downgrade coverage. It must not claim partial Postgres/S3/browser coverage if the relevant step did not run.
 - Dirty worktree fails closed unless `--allow-dirty` is explicitly provided.
-- Output must never include secrets, raw tokens, or signed URLs.
+- Output uses best-effort denylist redaction for known token, URL-query, authorization-header, and secret-assignment patterns. It must not intentionally print raw env files or signed URLs, but regex redaction is not a complete guarantee for unknown secret shapes.
 - Local gate status should be honest: usually `failed` or `partial`, not "passed hosted CI".
 
 Suggested CLI:
@@ -251,8 +257,8 @@ Self-hosted runner setup should not be the first response to one broken PR. Tool
 Required inputs:
 
 - repeated hosted runner unavailability evidence;
-- local gate evidence and its gaps;
-- operator note explaining why local gates are insufficient;
+- local gate evidence with machine-checkable coverage gaps;
+- operator note explaining the local-gate insufficiency context;
 - target host / runner labels / repo scope;
 - secret handling plan;
 - cleanup plan.
@@ -270,7 +276,8 @@ node "$CODING_WORKFLOW/scripts/self-hosted-runner-plan.mjs" \
 
 Acceptance:
 
-- Without both repeated hosted-runner evidence and local-CI insufficiency, status is `not_eligible`.
+- Without both repeated hosted-runner evidence and machine-checkable local-CI insufficiency from `local-gate-json`, status is `not_eligible`.
+- The operator note is required context, but it is not sufficient by itself to make a plan eligible.
 - The script never writes GitHub runner tokens to disk.
 - The script does not register a runner.
 - It produces human-reviewable commands and prerequisites only.
@@ -318,7 +325,7 @@ Required behavior:
 - Run health and smoke.
 - Print deployed commit and rollback ref.
 - Append JSONL audit record.
-- Redact health URL query strings, tokens, and secrets.
+- Redact health URL query strings and known token/secret patterns on generated evidence; do not place signed URLs or raw secrets in config.
 - Mark `productionRelease=false` unless a separate production workflow is explicitly implemented.
 
 Suggested CLI:
@@ -529,7 +536,7 @@ Before acting, read:
 - Staging deploy evidence is not production release evidence.
 - Missing env means skipped/partial, never covered.
 - Dirty worktree fails closed unless explicitly allowed.
-- Do not print secrets, signed URLs, access tokens, or raw env files.
+- Do not intentionally print secrets, signed URLs, access tokens, or raw env files; treat built-in redaction as best-effort denylist coverage, not a guarantee.
 - Rollback is evidence and command generation unless the product repo explicitly implements automatic rollback.
 ```
 
@@ -675,7 +682,7 @@ Files:
 Acceptance:
 
 - not eligible without repeated hosted runner evidence;
-- not eligible without local CI insufficiency note;
+- not eligible without machine-checkable local coverage gaps plus a local CI insufficiency note;
 - no runner token handling;
 - no automatic registration.
 
@@ -743,7 +750,8 @@ Guardrail:
 
 Guardrail:
 
-- redact known token, URL query, authorization header, secret-like env patterns;
+- redact known token, URL query, authorization header, and secret-like env patterns;
+- document that redaction is denylist/best-effort and not a guarantee for unknown secret shapes;
 - do not echo env files;
 - tests with secret-like fixtures;
 - keep full logs local unless redacted before PR comments.

@@ -29,7 +29,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `templates/consumer-self-hosted-runner-plan.md` | Inputs and boundaries for self-hosted runner planning. |
 | `templates/consumer-cicd-adoption-prompt.md` | Copy-paste prompt for adopting the CI/CD and staging-deploy extension in a product repo. |
 | `skills/coding-workflow-cicd-deploy/SKILL.md` | Thin Codex skill template that delegates CI/CD and staging-deploy operations to this repo's docs/scripts. |
-| `CICD-DEPLOY-WORKFLOW-PROPOSAL.md` | Accepted design record for the CI/CD and staging-deploy extension; current behavior is implemented in the scripts/templates above. |
+| `CICD-DEPLOY-WORKFLOW-PROPOSAL.md` | Implemented design record for the CI/CD and staging-deploy extension; cross-product reuse validation is still pending. |
 | `BOOTSTRAP.md` | How to adopt this in a new or existing product repo. |
 | `ADOPT-PROMPT.md` | Copy-paste prompt for asking an agent to adopt this workflow in another product repo. |
 

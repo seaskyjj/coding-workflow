@@ -186,6 +186,23 @@ const eligible = buildSelfHostedRunnerPlan({
 });
 assert.equal(eligible.status, 'eligible');
 assert.equal(eligible.tokenHandling.includes('not implemented'), true);
+const adequateLocalGate = {
+  ...localGate.evidence,
+  status: 'passed',
+  hostedCoverage: {
+    ci: { status: 'passed' },
+  },
+};
+const noteOnlyRunnerPlan = buildSelfHostedRunnerPlan({
+  diagnostics,
+  localGate: adequateLocalGate,
+  note: 'Branch protection requires visible PR checks.',
+  targetHost: 'runner-host',
+  runnerLabels: ['self-hosted', 'linux'],
+  repoScope: 'owner/repo',
+});
+assert.equal(noteOnlyRunnerPlan.status, 'not_eligible');
+assert.ok(noteOnlyRunnerPlan.reasons.some((reason) => reason.includes('machine-checkable coverage gaps')));
 
 // Service manager plan generates commands without executing restart.
 const systemd = buildServiceManagerPlan({ manager: 'systemd', services: ['api'] });

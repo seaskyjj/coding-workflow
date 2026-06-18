@@ -93,7 +93,7 @@ OPTIONAL CI/CD + staging-deploy adoption, only if explicitly requested:
    - run `service-manager-plan.mjs` against the staging config;
    - run `deploy-remote-staging.mjs --dry-run` first;
    - use `ci-diagnose-pr.mjs` before recommending local fallback;
-   - generate `self-hosted-runner-plan.mjs` output only when diagnostics show repeated hosted-runner unavailability and local CI is insufficient.
+   - generate `self-hosted-runner-plan.mjs` output only when diagnostics show repeated hosted-runner unavailability and local gate JSON contains machine-checkable coverage gaps.
 
 FINALLY, tell the human the prerequisites only THEY can do (you cannot): 
    (a) enable the repo setting "Automatically delete head branches"; 

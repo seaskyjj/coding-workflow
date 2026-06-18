@@ -63,7 +63,7 @@ node "$CODING_WORKFLOW/scripts/self-hosted-runner-plan.mjs" \
   --repo-scope OWNER/REPO
 ```
 
-This produces a plan only. It never registers a runner and never writes GitHub runner tokens to disk.
+This produces a plan only when diagnostics show repeated hosted-runner unavailability and local gate JSON contains machine-checkable coverage gaps. It never registers a runner and never writes GitHub runner tokens to disk.
 
 ## Deploy Staging
 
@@ -93,6 +93,6 @@ node "$CODING_WORKFLOW/scripts/deploy-remote-staging.mjs" \
 - Staging deploy evidence is not production release evidence.
 - Missing env means skipped/partial, never covered.
 - Dirty worktree fails closed unless explicitly allowed.
-- Do not print secrets, signed URLs, access tokens, or raw env files.
+- Do not intentionally print secrets, signed URLs, access tokens, or raw env files; built-in redaction is best-effort denylist coverage, not a guarantee for unknown secret shapes.
 - Rollback is evidence and command generation unless the product repo explicitly implements automatic rollback.
 - Report unavailable tools, missing config, and skipped coverage honestly instead of fabricating evidence.

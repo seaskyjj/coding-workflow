@@ -154,7 +154,7 @@ This adds local fallback evidence and staging deploy mechanics. It does not repl
    ```bash
    node "$CODING_WORKFLOW/scripts/ci-diagnose-pr.mjs" --repo OWNER/REPO --pr PR_NUMBER --history-limit 20
    ```
-6. Generate a self-hosted runner plan only when diagnostics show repeated hosted-runner unavailability and local CI is insufficient:
+6. Generate a self-hosted runner plan only when diagnostics show repeated hosted-runner unavailability and local gate JSON contains machine-checkable coverage gaps:
    ```bash
    node "$CODING_WORKFLOW/scripts/self-hosted-runner-plan.mjs" \
      --diagnostics-json tmp/coding-workflow/ci-diagnostics/pr-123/ci-diagnostics.json \

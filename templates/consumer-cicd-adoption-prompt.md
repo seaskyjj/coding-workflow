@@ -33,7 +33,8 @@ Then inspect THIS product repo and open one PR that adds only product-owned conf
 4. Validate locally:
    - run a local gate profile with `--allow-dirty` only if the PR intentionally includes uncommitted local evidence;
    - run deploy with `--dry-run` first;
-   - run `service-manager-plan.mjs` against the deploy config.
+   - run `service-manager-plan.mjs` against the deploy config;
+   - generate self-hosted runner plans only when local gate JSON contains machine-checkable coverage gaps.
 
 5. Report human-only prerequisites:
    - confirm target host access;

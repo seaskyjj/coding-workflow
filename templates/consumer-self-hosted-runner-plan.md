@@ -1,12 +1,12 @@
 # Self-Hosted Runner Plan Input
 
-Use this only after `ci-diagnose-pr.mjs` has classified repeated hosted-runner unavailability and local gate evidence shows why local CI is insufficient.
+Use this only after `ci-diagnose-pr.mjs` has classified repeated hosted-runner unavailability and local gate evidence contains machine-checkable coverage gaps showing why local CI is insufficient.
 
 Required evidence:
 
 - diagnostics JSON from `scripts/ci-diagnose-pr.mjs`;
 - local gate JSON from `scripts/local-pr-gate.mjs`;
-- operator note explaining why local CI evidence is insufficient;
+- operator note explaining the local-CI insufficiency context; this note is required, but it is not sufficient without coverage gaps in the local gate JSON;
 - target host;
 - runner labels;
 - repo or organization scope;

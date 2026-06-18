@@ -35,6 +35,7 @@ function localCoverageGaps(localGate) {
 export function buildSelfHostedRunnerPlan({ diagnostics, localGate, note, targetHost, runnerLabels, repoScope }) {
   const count = hostedUnavailableCount(diagnostics);
   const gaps = localCoverageGaps(localGate);
+  const hasMachineCheckableLocalInsufficiency = gaps.length > 0;
   const missingInputs = [];
   if (!targetHost) missingInputs.push('target host');
   if (!repoScope) missingInputs.push('repo scope');
@@ -43,11 +44,12 @@ export function buildSelfHostedRunnerPlan({ diagnostics, localGate, note, target
   let status = 'not_eligible';
   const reasons = [];
   if (count < 2) reasons.push('repeated hosted-runner unavailability evidence not present (requires at least two classified records)');
+  if (!hasMachineCheckableLocalInsufficiency) reasons.push('local gate evidence does not show machine-checkable coverage gaps');
   if (!note) reasons.push('local CI insufficiency note missing');
-  if (count >= 2 && note && missingInputs.length > 0) {
+  if (count >= 2 && hasMachineCheckableLocalInsufficiency && note && missingInputs.length > 0) {
     status = 'needs_input';
     reasons.push(`missing plan inputs: ${missingInputs.join(', ')}`);
-  } else if (count >= 2 && note) {
+  } else if (count >= 2 && hasMachineCheckableLocalInsufficiency && note) {
     status = 'eligible';
   }
 

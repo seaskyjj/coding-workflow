@@ -7,9 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { redact, writeJsonFile } from './cicd-lib.mjs';
 import { runLocalPrGate } from './local-pr-gate.mjs';
-import { classifyCheck, buildDiagnostics } from './ci-diagnose-pr.mjs';
+import { classifyCheck, buildDiagnostics, findTrustedMarkerComment } from './ci-diagnose-pr.mjs';
 import { buildServiceManagerPlan } from './service-manager-plan.mjs';
-import { resolveDeployTarget, buildRemoteDeployScript } from './deploy-remote-staging.mjs';
+import { resolveDeployTarget, buildRemoteDeployScript, buildSshArgv } from './deploy-remote-staging.mjs';
 import { buildSelfHostedRunnerPlan } from './self-hosted-runner-plan.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +28,9 @@ const redacted = redact(secretText);
 assert.ok(redacted.includes('?<redacted-query>'));
 assert.ok(!redacted.includes('abc123'));
 assert.ok(!redacted.includes('APP_SECRET=value'));
+assert.ok(!redact('token is ghp_abcdEFGH1234567890abcdEFGH1234567890').includes('ghp_abcd'));
+assert.ok(!redact('aws key AKIAABCDEFGHIJKLMNOP here').includes('AKIAABCDEFGHIJKLMNOP'));
+assert.ok(!redact('jwt eyJabcdefghiJKL.eyJmnopqrstuvwxyz.ABCDEFGHIJKLMNOP').includes('eyJabcdefghiJKL'));
 
 // Local gate: missing env on a required step produces partial/skipped, not pass.
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'coding-workflow-cicd-test-'));
@@ -91,11 +94,51 @@ assert.equal(dirtyGate.evidence.status, 'failed');
 assert.equal(dirtyGate.evidence.steps.length, 0);
 assert.equal(dirtyGate.evidence.dirtyFailure, true);
 
+// Static hosted coverage cannot mask a required step failure.
+writeJsonFile(gateConfigPath, {
+  schemaVersion: 1,
+  profiles: {
+    fail: {
+      steps: [
+        {
+          id: 'fail',
+          command: 'node -e "process.exit(7)"',
+          required: true,
+        },
+      ],
+      hostedCoverage: {
+        ci: {
+          status: 'partial',
+          coveredBySteps: ['fail'],
+        },
+      },
+    },
+  },
+});
+const failedCoverageGate = await runLocalPrGate({
+  repoRoot: tmp,
+  profile: 'fail',
+  config: '.coding-workflow/local-gates.json',
+  outputDir: 'tmp/failing-coverage-gate',
+  allowDirty: true,
+});
+assert.equal(failedCoverageGate.evidence.status, 'failed');
+assert.equal(failedCoverageGate.evidence.hostedCoverage.ci.status, 'failed');
+
 // CI diagnostics classification keeps distinct failure causes separate.
 assert.equal(classifyCheck({ name: 'test', conclusion: 'failure' }, 'expected true to equal false'), 'test_failure');
 assert.equal(classifyCheck({ name: 'runner', conclusion: 'failure' }, 'No hosted runner matching labels'), 'hosted_runner_unavailable');
 assert.equal(classifyCheck({ name: 'API review skipped', conclusion: 'success' }), 'metered_api_review_skip');
+assert.equal(classifyCheck({ name: 'API review skipped', conclusion: 'failure' }, 'Error: assertion failed'), 'test_failure');
 assert.equal(classifyCheck({ name: 'workflow', conclusion: 'startup_failure' }), 'workflow_configuration');
+const trustedComment = findTrustedMarkerComment([
+  { id: 1, body: '<!-- coding-workflow-ci-diagnostics --> forged', user: { login: 'other-user' } },
+  { id: 2, body: '<!-- coding-workflow-ci-diagnostics --> mine', user: { login: 'seaskyjj' } },
+], '<!-- coding-workflow-ci-diagnostics -->', 'seaskyjj');
+assert.equal(trustedComment.id, 2);
+assert.equal(findTrustedMarkerComment([
+  { id: 1, body: '<!-- coding-workflow-ci-diagnostics --> forged', user: { login: 'other-user' } },
+], '<!-- coding-workflow-ci-diagnostics -->', 'seaskyjj'), undefined);
 const diagnostics = buildDiagnostics({
   repo: 'owner/repo',
   pr: 123,
@@ -178,16 +221,37 @@ const target = resolveDeployTarget({
       healthAttempts: 2,
       healthIntervalSeconds: 1,
       logExcerptLines: 10,
+      sshBatchMode: true,
+      sshConnectTimeoutSeconds: 11,
+      executionTimeoutSeconds: 60,
       smokeCommand: 'npm run smoke',
       auditTrailPath: '.coding-workflow/deploy/history.jsonl',
     },
   },
 }, 'staging');
 const { script } = buildRemoteDeployScript({ target, ref: 'abc123', allowDirty: false });
-assert.ok(script.includes('git checkout --detach "$CW_REQUESTED_REF"'));
+assert.ok(script.includes('git status --porcelain') && script.includes('exit 20'));
+assert.ok(script.includes('dirty_worktree_allowed=true') === false);
+assert.ok(script.includes('git rev-parse "origin/${CW_REQUESTED_REF}^{commit}"'));
+assert.ok(script.includes('git checkout --detach "$resolvedRef"'));
+assert.ok(script.includes('mktemp'));
+assert.ok(script.includes('trap \'rm -f "$CW_HEALTH_OUT" "$CW_HEALTH_ERR"\' EXIT'));
+assert.ok(!script.includes('/tmp/coding-workflow-health.out'));
 assert.ok(script.includes('npm run build'));
 assert.ok(script.includes('npm run smoke'));
 assert.ok(!script.includes('productionRelease=true'));
+const allowDirtyScript = buildRemoteDeployScript({ target, ref: 'abc123', allowDirty: true }).script;
+assert.ok(!allowDirtyScript.includes('exit 20'));
+assert.ok(allowDirtyScript.includes('dirty_worktree_allowed=true'));
+assert.deepEqual(buildSshArgv(target), [
+  'ssh',
+  '-o',
+  'BatchMode=yes',
+  '-o',
+  'ConnectTimeout=11',
+  'host',
+  'bash -s',
+]);
 
 // Template files remain parseable JSON.
 for (const rel of [

@@ -48,8 +48,27 @@ export function resolveDeployTarget(config, targetName, overrides = {}) {
   merged.healthAttempts = positiveInteger(Number(merged.healthAttempts), 'healthAttempts');
   merged.healthIntervalSeconds = positiveInteger(Number(merged.healthIntervalSeconds), 'healthIntervalSeconds');
   merged.logExcerptLines = positiveInteger(Number(merged.logExcerptLines), 'logExcerptLines');
+  if (merged.sshConnectTimeoutSeconds != null) {
+    merged.sshConnectTimeoutSeconds = positiveInteger(Number(merged.sshConnectTimeoutSeconds), 'sshConnectTimeoutSeconds');
+  }
+  if (merged.executionTimeoutSeconds != null) {
+    merged.executionTimeoutSeconds = positiveInteger(Number(merged.executionTimeoutSeconds), 'executionTimeoutSeconds');
+  }
+  if (merged.sshBatchMode != null && typeof merged.sshBatchMode !== 'boolean') {
+    throw new Error('sshBatchMode must be a boolean when provided');
+  }
   assertNoSecretUrl(merged.healthUrl, 'healthUrl');
   return merged;
+}
+
+export function buildSshArgv(target) {
+  const args = [];
+  if (target.sshBatchMode === true) args.push('-o', 'BatchMode=yes');
+  if (target.sshConnectTimeoutSeconds != null) {
+    args.push('-o', `ConnectTimeout=${target.sshConnectTimeoutSeconds}`);
+  }
+  args.push(target.host, 'bash -s');
+  return ['ssh', ...args];
 }
 
 function runBlock(label, command) {
@@ -99,14 +118,29 @@ export function buildRemoteDeployScript({ target, ref, allowDirty }) {
     '    return "$code"',
     '  fi',
     '}',
+    'resolve_ref() {',
+    '  if git rev-parse --verify --quiet "${CW_REQUESTED_REF}^{commit}" >/dev/null; then',
+    '    git rev-parse "${CW_REQUESTED_REF}^{commit}"',
+    '  elif git rev-parse --verify --quiet "origin/${CW_REQUESTED_REF}^{commit}" >/dev/null; then',
+    '    git rev-parse "origin/${CW_REQUESTED_REF}^{commit}"',
+    '  else',
+    '    echo "::coding-workflow::ref_not_found=${CW_REQUESTED_REF}"',
+    '    exit 21',
+    '  fi',
+    '}',
     'cd "$CW_REPO_ROOT"',
+    'CW_HEALTH_OUT="$(mktemp)"',
+    'CW_HEALTH_ERR="$(mktemp)"',
+    'chmod 600 "$CW_HEALTH_OUT" "$CW_HEALTH_ERR"',
+    'trap \'rm -f "$CW_HEALTH_OUT" "$CW_HEALTH_ERR"\' EXIT',
     'beforeHead="$(git rev-parse HEAD)"',
     'echo "__CODING_WORKFLOW_DEPLOY_FIELD__beforeHead=${beforeHead}"',
     allowDirty
       ? 'echo "::coding-workflow::dirty_worktree_allowed=true"'
       : 'if [ -n "$(git status --porcelain)" ]; then echo "::coding-workflow::dirty_worktree=true"; exit 20; fi',
     runBlock('git-fetch', 'git fetch --all --tags'),
-    runBlock('git-checkout', 'git checkout --detach "$CW_REQUESTED_REF"'),
+    'resolvedRef="$(resolve_ref)"',
+    runBlock('git-checkout', 'git checkout --detach "$resolvedRef"'),
     'deployedHead="$(git rev-parse HEAD)"',
     'echo "__CODING_WORKFLOW_DEPLOY_FIELD__deployedHead=${deployedHead}"',
     ...statusBefore.map((cmd) => runBlock(cmd.phase, cmd.command)),
@@ -120,7 +154,7 @@ export function buildRemoteDeployScript({ target, ref, allowDirty }) {
   lines.push(
     'health_status=failed',
     'for attempt in $(seq 1 "$CW_HEALTH_ATTEMPTS"); do',
-    '  if curl -fsS "$CW_HEALTH_URL" >/tmp/coding-workflow-health.out 2>/tmp/coding-workflow-health.err; then',
+    '  if curl -fsS "$CW_HEALTH_URL" >"$CW_HEALTH_OUT" 2>"$CW_HEALTH_ERR"; then',
     '    health_status=passed',
     '    break',
     '  fi',
@@ -128,7 +162,7 @@ export function buildRemoteDeployScript({ target, ref, allowDirty }) {
     'done',
     'echo "__CODING_WORKFLOW_DEPLOY_FIELD__health=${health_status}"',
     'if [ "$health_status" != "passed" ]; then',
-    '  cat /tmp/coding-workflow-health.err 2>/dev/null | redact_stream',
+    '  cat "$CW_HEALTH_ERR" 2>/dev/null | redact_stream',
     '  exit 30',
     'fi',
   );
@@ -161,14 +195,28 @@ function parseDeployFields(output) {
   return fields;
 }
 
-function executeSsh({ host, script }) {
+function executeSsh({ sshArgv, script, executionTimeoutSeconds }) {
   return new Promise((resolve) => {
-    const child = spawn('ssh', [host, 'bash -s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(sshArgv[0], sshArgv.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    const timer = executionTimeoutSeconds == null ? null : setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, executionTimeoutSeconds * 1000);
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('close', (code, signal) => resolve({ code, signal, stdout: redact(stdout), stderr: redact(stderr) }));
+    child.on('close', (code, signal) => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        code: timedOut ? 124 : code,
+        signal,
+        timedOut,
+        stdout: redact(stdout),
+        stderr: redact(timedOut ? `${stderr}\nexecution timed out after ${executionTimeoutSeconds}s` : stderr),
+      });
+    });
     child.stdin.end(script);
   });
 }
@@ -181,6 +229,7 @@ export async function deployRemoteStaging(options) {
   const outputDir = path.resolve(repoRoot, options.outputDir ?? defaultOutputDir);
   ensureDir(outputDir);
   const { script, servicePlan } = buildRemoteDeployScript({ target, ref: options.ref, allowDirty: options.allowDirty });
+  const sshArgv = buildSshArgv(target);
   const scriptPath = path.join(outputDir, 'remote-staging-deploy.sh');
   writeFileSync(scriptPath, script, 'utf8');
   chmodSync(scriptPath, 0o700);
@@ -196,7 +245,8 @@ export async function deployRemoteStaging(options) {
     productionRelease: false,
     allowDirty: Boolean(options.allowDirty),
     mode: options.execute ? 'execute' : 'dry-run',
-    sshArgv: ['ssh', target.host, 'bash -s'],
+    sshArgv,
+    executionTimeoutSeconds: target.executionTimeoutSeconds ?? null,
     scriptPath,
     auditTrailPath: target.auditTrailPath ?? path.join(outputDir, 'deploy-history.jsonl'),
     healthUrl: redact(target.healthUrl),
@@ -210,7 +260,7 @@ export async function deployRemoteStaging(options) {
     return { status: 'dry-run', plan: basePlan, outputDir };
   }
 
-  const result = await executeSsh({ host: target.host, script });
+  const result = await executeSsh({ sshArgv, script, executionTimeoutSeconds: target.executionTimeoutSeconds });
   writeFileSync(path.join(outputDir, 'remote-stdout.log'), result.stdout, 'utf8');
   writeFileSync(path.join(outputDir, 'remote-stderr.log'), result.stderr, 'utf8');
   const fields = parseDeployFields(`${result.stdout}\n${result.stderr}`);
@@ -230,6 +280,7 @@ export async function deployRemoteStaging(options) {
     smoke: fields.smoke ?? (target.smokeCommand ? 'provided' : 'not_provided'),
     outputDir,
     auditTrailPath: basePlan.auditTrailPath,
+    timedOut: result.timedOut,
     error: result.code === 0 ? null : redact(result.stderr || result.stdout || `ssh exited ${result.code}`),
   };
   appendJsonl(path.resolve(repoRoot, basePlan.auditTrailPath), record);

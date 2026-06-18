@@ -43,30 +43,39 @@ function missingEnvFor(step, env) {
   return (step.skipIfMissingEnv ?? []).filter((name) => !env[name]);
 }
 
-function deriveHostedCoverage(profile, stepResults) {
+function deriveCoverageStatus(rule, stepResults) {
   const byId = new Map(stepResults.map((step) => [step.id, step]));
+  const ids = rule.coveredBySteps ?? stepResults.map((step) => step.id);
+  const covered = ids.map((id) => byId.get(id)).filter(Boolean);
+  if (covered.length === 0) return { status: 'skipped', coveredBySteps: ids };
+  if (covered.some((step) => step.status === 'failed' && step.required)) return { status: 'failed', coveredBySteps: ids };
+  if (covered.some((step) => step.status === 'failed')) return { status: 'partial', coveredBySteps: ids };
+  if (covered.some((step) => step.status === 'skipped')) {
+    return { status: rule.statusWhenCoveredStepSkipped ?? 'skipped', coveredBySteps: ids };
+  }
+  if (covered.every((step) => step.status === 'passed')) {
+    return { status: rule.statusWhenAllCoveredStepsPassed ?? 'passed', coveredBySteps: ids };
+  }
+  return { status: 'partial', coveredBySteps: ids };
+}
+
+function deriveHostedCoverage(profile, stepResults) {
   const coverage = {};
   for (const [name, rule] of Object.entries(profile.hostedCoverage ?? {})) {
+    const derived = deriveCoverageStatus(rule, stepResults);
     if (rule.status) {
-      coverage[name] = { status: rule.status, note: rule.note ?? null };
+      const status = ['failed', 'skipped'].includes(derived.status) ? derived.status : rule.status;
+      coverage[name] = {
+        status,
+        note: rule.note ?? null,
+        coveredBySteps: derived.coveredBySteps,
+      };
       continue;
     }
-    const ids = rule.coveredBySteps ?? stepResults.map((step) => step.id);
-    const covered = ids.map((id) => byId.get(id)).filter(Boolean);
-    let status = 'partial';
-    if (covered.length === 0) {
-      status = 'skipped';
-    } else if (covered.some((step) => step.status === 'failed')) {
-      status = 'failed';
-    } else if (covered.some((step) => step.status === 'skipped')) {
-      status = rule.statusWhenCoveredStepSkipped ?? 'partial';
-    } else if (covered.every((step) => step.status === 'passed')) {
-      status = rule.statusWhenAllCoveredStepsPassed ?? 'partial';
-    }
     coverage[name] = {
-      status,
+      status: derived.status,
       note: rule.note ?? null,
-      coveredBySteps: ids,
+      coveredBySteps: derived.coveredBySteps,
     };
   }
   return coverage;

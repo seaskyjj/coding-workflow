@@ -85,6 +85,9 @@ const URL_RE = /\bhttps?:\/\/[^\s'"<>`]+/g;
 const SECRET_ASSIGNMENT_RE = /\b([A-Za-z0-9_./-]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION|SIGNATURE|CREDENTIAL)[A-Za-z0-9_./-]*)(\s*[:=]\s*)([^\s'",;]+)/gi;
 const AUTH_HEADER_RE = /\b(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s'",;]+/gi;
 const QUERY_SECRET_RE = /([?&](?:token|secret|password|passwd|api[_-]?key|access[_-]?key|signature|sig|x-amz-signature|credential|expires)=)[^&\s]+/gi;
+const GITHUB_TOKEN_RE = /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g;
+const AWS_ACCESS_KEY_RE = /\b(AKIA|ASIA)[A-Z0-9]{16}\b/g;
+const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 
 export function redact(value) {
   if (value == null) return value;
@@ -102,6 +105,9 @@ export function redact(value) {
   text = text.replace(AUTH_HEADER_RE, '$1<redacted>');
   text = text.replace(SECRET_ASSIGNMENT_RE, '$1$2<redacted>');
   text = text.replace(QUERY_SECRET_RE, '$1<redacted>');
+  text = text.replace(GITHUB_TOKEN_RE, '<redacted-github-token>');
+  text = text.replace(AWS_ACCESS_KEY_RE, '<redacted-aws-access-key>');
+  text = text.replace(JWT_RE, '<redacted-jwt>');
   return text;
 }
 

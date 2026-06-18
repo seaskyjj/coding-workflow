@@ -151,7 +151,7 @@ Implemented:
 - `local-pr-gate.mjs` runs product-declared local gate profiles and records honest `passed` / `partial` / `failed` evidence.
 - `ci-diagnose-pr.mjs` classifies GitHub PR check failures before recommending local fallback or self-hosted runner planning.
 - `service-manager-plan.mjs` generates restart/status/log command plans without executing them.
-- `deploy-remote-staging.mjs` generates remote staging deploy scripts, supports explicit `--execute`, records `productionRelease=false`, and writes audit JSONL through JSON serialization.
+- `deploy-remote-staging.mjs` generates remote staging deploy scripts, supports explicit `--execute`, records `productionRelease=false`, writes audit JSONL through JSON serialization, and only applies SSH timeout settings when the product config explicitly supplies them.
 - `self-hosted-runner-plan.mjs` generates a plan only when runner-unavailability evidence and local-CI insufficiency are both present.
 
 Not implemented by this tool family: production release promotion, automatic rollback, auto-merge, runner registration, runner token handling, or secret storage. Product repos must add those as separate explicit workflows if they want them.

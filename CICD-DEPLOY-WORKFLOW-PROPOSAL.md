@@ -94,7 +94,7 @@ Outputs:
 Required properties:
 
 - A required failed step fails the local gate.
-- A required skipped step fails the local gate unless it is an explicit missing-env skip.
+- A required missing-env skip yields `partial` evidence and a non-zero local gate exit; local gates do not currently define any other skip path.
 - Missing env skip must downgrade coverage. It must not claim partial Postgres/S3/browser coverage if the relevant step did not run.
 - Dirty worktree fails closed unless `--allow-dirty` is explicitly provided.
 - Output must never include secrets, raw tokens, or signed URLs.
@@ -358,6 +358,9 @@ Example product deploy config:
       "healthUrl": "http://127.0.0.1:4173/p0/health",
       "healthAttempts": 30,
       "healthIntervalSeconds": 2,
+      "sshBatchMode": true,
+      "sshConnectTimeoutSeconds": 10,
+      "executionTimeoutSeconds": 900,
       "smokeCommand": "npm run p0:smoke:standard-stack",
       "auditTrailPath": ".coding-workflow/deploy/history.jsonl",
       "logExcerptLines": 120,

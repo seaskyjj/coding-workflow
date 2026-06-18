@@ -76,7 +76,7 @@ OPTIONAL CI/CD + staging-deploy adoption, only if explicitly requested:
 
 8. `.coding-workflow/deploy.staging.json` — start from `templates/consumer-deploy-staging.json` and tailor real staging target config.
    - use real target host alias, repo root, service ids, health URL, smoke command, audit path, and log paths;
-   - choose explicit `healthAttempts`, `healthIntervalSeconds`, and `logExcerptLines`;
+   - choose explicit `healthAttempts`, `healthIntervalSeconds`, `logExcerptLines`, and any SSH timeout settings;
    - do not write secrets, signed URLs, or tokens into config;
    - keep production promotion out of scope unless the human explicitly requests a separate production workflow.
 

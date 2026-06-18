@@ -24,7 +24,7 @@ Then inspect THIS product repo and open one PR that adds only product-owned conf
    - Use real staging host alias, repo root, service ids, health URL, smoke command, and log paths.
    - Keep `productionRelease=false` by using the staging deploy tool only for staging.
    - Do not write secrets, signed URLs, or tokens into config.
-   - Pick explicit `healthAttempts`, `healthIntervalSeconds`, and `logExcerptLines`.
+   - Pick explicit `healthAttempts`, `healthIntervalSeconds`, `logExcerptLines`, and any SSH timeout settings.
 
 3. Add package/script wrappers only if they are portable.
    - Prefer `CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"`.

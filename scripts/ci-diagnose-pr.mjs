@@ -45,7 +45,8 @@ export function classifyCheck(item, logText = '') {
   ].filter(Boolean).join('\n'));
   const conclusion = normalizeConclusion(item);
 
-  if (text.includes('api review skipped') || text.includes('metered api ai review is intentionally disabled')) {
+  if ((conclusion === 'success' || conclusion === 'skipped')
+    && (text.includes('api review skipped') || text.includes('metered api ai review is intentionally disabled'))) {
     return 'metered_api_review_skip';
   }
   if (conclusion === 'pending') return 'pending';
@@ -202,9 +203,27 @@ This is diagnostic evidence. It does not turn local evidence into hosted CI pass
 `;
 }
 
+export function findTrustedMarkerComment(comments, marker, trustedLogin) {
+  if (!trustedLogin) return undefined;
+  return comments.find((comment) => (
+    String(comment.body ?? '').includes(marker)
+    && comment.user?.login === trustedLogin
+  ));
+}
+
+function authenticatedGhLogin() {
+  try {
+    return JSON.parse(execGh(['api', 'user'])).login ?? null;
+  } catch {
+    return process.env.GITHUB_ACTOR ?? null;
+  }
+}
+
 function upsertComment(repo, pr, body) {
+  const marker = '<!-- coding-workflow-ci-diagnostics -->';
+  const trustedLogin = authenticatedGhLogin();
   const comments = JSON.parse(execGh(['api', `repos/${repo}/issues/${pr}/comments`, '--paginate']));
-  const existing = comments.find((comment) => String(comment.body ?? '').includes('<!-- coding-workflow-ci-diagnostics -->'));
+  const existing = findTrustedMarkerComment(comments, marker, trustedLogin);
   if (existing) {
     execGh(['api', '-X', 'PATCH', `repos/${repo}/issues/comments/${existing.id}`, '--input', '-'], { input: JSON.stringify({ body }) });
     return { action: 'updated', id: existing.id };

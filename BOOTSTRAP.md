@@ -137,7 +137,7 @@ Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root*
 This adds local fallback evidence and staging deploy mechanics. It does not replace hosted CI, promote production, register runners, or handle secrets.
 
 1. Copy `templates/consumer-local-gates.json` → product `.coding-workflow/local-gates.json`; tailor real commands, env names, coverage mapping, and profile ids.
-2. Copy `templates/consumer-deploy-staging.json` → product `.coding-workflow/deploy.staging.json`; tailor target host, repo root, service ids, health URL, smoke command, log paths, `healthAttempts`, `healthIntervalSeconds`, and `logExcerptLines`.
+2. Copy `templates/consumer-deploy-staging.json` → product `.coding-workflow/deploy.staging.json`; tailor target host, repo root, service ids, health URL, smoke command, log paths, `healthAttempts`, `healthIntervalSeconds`, `logExcerptLines`, and any explicit SSH timeout settings.
 3. Add portable wrappers if useful:
    ```bash
    CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"

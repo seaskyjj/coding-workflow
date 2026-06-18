@@ -1,0 +1,9 @@
+{
+  "manager": "systemd",
+  "services": ["example-api", "example-worker"],
+  "notes": [
+    "Replace service ids with product-owned unit names.",
+    "Verify unit persistence on the target host before treating restart evidence as unattended service recovery.",
+    "Keep production promotion rules outside the staging deploy config unless a separate production workflow is explicitly designed."
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "example-staging": {
+      "host": "staging-host-alias",
+      "repoRoot": "/srv/example-app",
+      "manager": "systemd",
+      "services": ["example-api", "example-worker"],
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "migrationCommand": "npm run migrate:staging",
+      "healthUrl": "http://127.0.0.1:8080/health",
+      "healthAttempts": 30,
+      "healthIntervalSeconds": 2,
+      "smokeCommand": "npm run smoke:staging",
+      "auditTrailPath": ".coding-workflow/deploy/history.jsonl",
+      "logExcerptLines": 120,
+      "logPaths": [
+        "/var/log/example-app/api.log",
+        "/var/log/example-app/worker.log"
+      ]
+    }
+  }
+}

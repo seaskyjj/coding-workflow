@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "docs": {
+      "description": "Documentation and workflow-policy checks only. This is local evidence, not hosted CI passing.",
+      "steps": [
+        {
+          "id": "diff-check",
+          "command": "git diff --check",
+          "required": true,
+          "covers": ["diff_integrity"]
+        },
+        {
+          "id": "docs-links",
+          "command": "npm run docs:check",
+          "required": false,
+          "covers": ["docs_integrity"],
+          "skipIfMissingEnv": ["DOCS_CHECK_AVAILABLE"]
+        }
+      ],
+      "hostedCoverage": {
+        "ci": {
+          "status": "partial",
+          "note": "Docs profile does not reproduce product test/typecheck/lint jobs."
+        }
+      }
+    },
+    "standard-stack": {
+      "description": "Product-owned standard-stack smoke. Replace the command and env names with real project requirements.",
+      "steps": [
+        {
+          "id": "standard-stack-smoke",
+          "command": "npm run smoke:standard-stack",
+          "required": true,
+          "covers": ["database", "object_storage", "api_health", "worker_smoke"],
+          "skipIfMissingEnv": [
+            "APP_DATABASE_URL",
+            "APP_OBJECT_STORAGE_ENDPOINT",
+            "APP_OBJECT_STORAGE_BUCKET",
+            "APP_OBJECT_STORAGE_ACCESS_KEY_ID",
+            "APP_OBJECT_STORAGE_SECRET_ACCESS_KEY"
+          ]
+        }
+      ],
+      "hostedCoverage": {
+        "integration": {
+          "coveredBySteps": ["standard-stack-smoke"],
+          "statusWhenAllCoveredStepsPassed": "partial",
+          "statusWhenCoveredStepSkipped": "skipped",
+          "note": "Local smoke is not automatically equivalent to the hosted service-container job."
+        }
+      }
+    }
+  }
+}

@@ -21,6 +21,8 @@ jobs:
           node-version: '22'
       - name: Reviewer self-test
         run: node scripts/ai-review-self-test.mjs
+      - name: CI/CD self-test
+        run: node scripts/cicd-self-test.mjs
       - name: PR body + branch check (warn-only, no key needed)
         run: node scripts/pr-body-check.mjs --repo "$GITHUB_REPOSITORY" --pr "${{ github.event.pull_request.number }}"
         env:

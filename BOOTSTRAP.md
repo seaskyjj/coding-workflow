@@ -132,6 +132,41 @@ Optional project rules: drop a `reviewer-overlay.md` at the **product-repo root*
 3. Copy `templates/consumer-ci.yml` → product `.github/workflows/ci.yml`; adjust commands (typecheck/lint/test + project gates like eval / visual).
 4. Open a PR — GitHub Actions run the no-key workflow checks and non-AI gate. Run local independent CLI review (`codex-cli` for Claude-implemented PRs, `claude-cli` for Codex-implemented PRs) for the deep / confirm-fixes / gate AI rounds.
 
+## 2b. Optional CI/CD and staging-deploy adoption
+
+This adds local fallback evidence and staging deploy mechanics. It does not replace hosted CI, promote production, register runners, or handle secrets.
+
+1. Copy `templates/consumer-local-gates.json` → product `.coding-workflow/local-gates.json`; tailor real commands, env names, coverage mapping, and profile ids.
+2. Copy `templates/consumer-deploy-staging.json` → product `.coding-workflow/deploy.staging.json`; tailor target host, repo root, service ids, health URL, smoke command, log paths, `healthAttempts`, `healthIntervalSeconds`, and `logExcerptLines`.
+3. Add portable wrappers if useful:
+   ```bash
+   CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
+   node "$CODING_WORKFLOW/scripts/local-pr-gate.mjs" --profile docs --config .coding-workflow/local-gates.json
+   node "$CODING_WORKFLOW/scripts/deploy-remote-staging.mjs" --config .coding-workflow/deploy.staging.json --target example-staging --ref HEAD --dry-run
+   ```
+4. Run local validation before claiming adoption:
+   ```bash
+   node "$CODING_WORKFLOW/scripts/local-pr-gate.mjs" --profile docs --config .coding-workflow/local-gates.json --allow-dirty
+   node "$CODING_WORKFLOW/scripts/service-manager-plan.mjs" --config .coding-workflow/deploy.staging.json --target example-staging --json
+   node "$CODING_WORKFLOW/scripts/deploy-remote-staging.mjs" --config .coding-workflow/deploy.staging.json --target example-staging --ref HEAD --dry-run
+   ```
+5. Diagnose a PR before recommending fallback:
+   ```bash
+   node "$CODING_WORKFLOW/scripts/ci-diagnose-pr.mjs" --repo OWNER/REPO --pr PR_NUMBER --history-limit 20
+   ```
+6. Generate a self-hosted runner plan only when diagnostics show repeated hosted-runner unavailability and local CI is insufficient:
+   ```bash
+   node "$CODING_WORKFLOW/scripts/self-hosted-runner-plan.mjs" \
+     --diagnostics-json tmp/coding-workflow/ci-diagnostics/pr-123/ci-diagnostics.json \
+     --local-gate-json tmp/coding-workflow/local-pr-gate/docs/local-pr-gate.json \
+     --local-ci-insufficient-note "Branch protection requires visible PR checks." \
+     --target-host staging-runner-1 \
+     --runner-labels self-hosted,linux,x64 \
+     --repo-scope OWNER/REPO
+   ```
+
+Human-only prerequisites: confirm target host access, service-manager persistence, runner cleanup/security posture, and any GitHub runner registration token. Keep production promotion as a separate explicit workflow.
+
 ## 3. Operating rules (see WORKFLOW.md)
 - One capability per PR; leave `main` green; revertable.
 - Every real-bug finding becomes a regression test **in the same PR**.

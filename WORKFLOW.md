@@ -39,6 +39,16 @@ Temporary or pilot-only work can use `REVIEW_PROFILE=pilot_minimal` to keep revi
 
 GitHub Actions should run the non-AI gate and lightweight workflow checks by default. Metered API AI review is intentionally disabled in the templates until a repo explicitly opts back in; local CLI review (`codex-cli` when Claude implemented the PR, `claude-cli` when Codex implemented it) is the default AI review path while cost and cadence are being tuned.
 
+### Local CI and staging deploy evidence
+
+Local CI fallback is evidence, not hosted CI passing unless the product repo explicitly proves equivalent coverage. A local gate must record the profile, commands, host, head SHA, dirty-worktree state, skipped steps, missing env, and hosted-check coverage gaps. `partial` and `skipped` are first-class statuses; they must not be described as a full pass.
+
+Remote staging deploys are scripted staging evidence, not production release. The shared tooling may fetch a requested ref, build, optionally run a product-supplied migration, restart through a declared service manager, run health/smoke checks, and write an audit record with `productionRelease=false`. It must not auto-promote production or auto-roll back unless a product repo separately designs and accepts that behavior.
+
+Self-hosted runner setup requires evidence, not impulse: repeated hosted-runner unavailability plus local-CI insufficiency. The shared tooling should generate a human-reviewable plan only; GitHub runner token creation and registration remain operator-controlled.
+
+Every fallback/deploy decision should land in GitHub or generated artifacts, not chat memory.
+
 ## 4. The loop
 
 ```

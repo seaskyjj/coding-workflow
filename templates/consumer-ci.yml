@@ -38,3 +38,7 @@ jobs:
         run: npm run lint --workspaces --if-present
       # - name: project gate (eval / visual / e2e) — enable when the data/tooling exists
       #   run: npm run <your-gate>
+      # If GitHub hosted runners are unavailable, collect local evidence with
+      # scripts/local-pr-gate.mjs + templates/consumer-local-gates.json. Local
+      # evidence is not hosted CI passing unless your project explicitly proves
+      # equivalent coverage.

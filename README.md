@@ -16,9 +16,20 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `scripts/pr-log.mjs` | Generate/append `pr_log.jsonl` from GitHub (`gh`). Derived export — regenerable, never hand-maintained. |
 | `scripts/pr_log.schema.json` | Schema of one `pr_log.jsonl` record (for stats / validation). |
 | `scripts/local-review.sh` | No-GitHub-Actions fallback: poll a repo for new/updated PRs and run the reviewer locally; defaults to `deep` for first seen PR heads and `confirm-fixes` for later pushes to the same PR. |
+| `scripts/local-pr-gate.mjs` | Product-configured local non-AI gate runner. Writes `local-pr-gate.json`/`.md`, fails closed on dirty worktrees unless explicit, and records missing env as skipped/partial evidence. |
+| `scripts/ci-diagnose-pr.mjs` | GitHub PR check diagnostics. Classifies pending checks, workflow config failures, hosted-runner unavailability, product test failures, metered API review skips, and quota/billing issues before recommending fallback. |
+| `scripts/service-manager-plan.mjs` | Generates auditable service-manager command plans for `systemd`, `pm2`, `docker-compose`, or `none`; it does not execute restarts. |
+| `scripts/deploy-remote-staging.mjs` | Generates and optionally executes an auditable remote staging deploy over SSH. It records staging evidence and local audit JSONL, never production release or automatic rollback. |
+| `scripts/self-hosted-runner-plan.mjs` | Evidence-gated self-hosted runner planning. It requires repeated hosted-runner unavailability plus local-CI insufficiency evidence; it never registers a runner or stores tokens. |
 | `.github/workflows/ai-review.yml` | This repo's own no-key PR review workflow (also serves as a working example). |
 | `templates/consumer-ai-review.yml` | Drop into a **product repo** `.github/workflows/` for no-key review workflow checks; local CLI review (`codex-cli` / `claude-cli`) remains the default AI review path. |
 | `templates/consumer-ci.yml` | The **non-AI gate** (typecheck/test/lint/eval) a product repo must run — the real safety net. |
+| `templates/consumer-local-gates.json` | Product-owned local gate config template. Commands/env names are placeholders to tailor, not shared product policy. |
+| `templates/consumer-deploy-staging.json` | Product-owned remote staging deploy config template with explicit health retry/log excerpt settings. |
+| `templates/consumer-self-hosted-runner-plan.md` | Inputs and boundaries for self-hosted runner planning. |
+| `templates/consumer-cicd-adoption-prompt.md` | Copy-paste prompt for adopting the CI/CD and staging-deploy extension in a product repo. |
+| `skills/coding-workflow-cicd-deploy/SKILL.md` | Thin Codex skill template that delegates CI/CD and staging-deploy operations to this repo's docs/scripts. |
+| `CICD-DEPLOY-WORKFLOW-PROPOSAL.md` | Implemented design record for the CI/CD and staging-deploy extension; cross-product reuse validation is still pending. |
 | `BOOTSTRAP.md` | How to adopt this in a new or existing product repo. |
 | `ADOPT-PROMPT.md` | Copy-paste prompt for asking an agent to adopt this workflow in another product repo. |
 
@@ -130,3 +141,17 @@ A PR diff shows only the changed hunks, but a proposal's argument lives in the w
 
 - **AI review is additive; the non-AI gate is the safety net.** typecheck/test/lint/eval-gate run independently of any AI judgment. If the AI reviewer misses something, the gate still stands.
 - **Auto-trigger review: yes. Auto-merge: no.** Merge keeps a human gate, especially for security / irreversible / architectural changes.
+
+## CI/CD and staging deploy tooling
+
+The CI/CD extension follows the same source-of-truth rule as PR review: product repos own commands, env, services, targets, and promotion policy; this repo provides reusable mechanisms and evidence formats.
+
+Implemented:
+
+- `local-pr-gate.mjs` runs product-declared local gate profiles and records honest `passed` / `partial` / `failed` evidence.
+- `ci-diagnose-pr.mjs` classifies GitHub PR check failures before recommending local fallback or self-hosted runner planning.
+- `service-manager-plan.mjs` generates restart/status/log command plans without executing them.
+- `deploy-remote-staging.mjs` generates remote staging deploy scripts, supports explicit `--execute`, records `productionRelease=false`, writes audit JSONL through JSON serialization, and only applies SSH timeout settings when the product config explicitly supplies them.
+- `self-hosted-runner-plan.mjs` generates a plan only when runner-unavailability evidence and local-CI insufficiency are both present.
+
+Not implemented by this tool family: production release promotion, automatic rollback, auto-merge, runner registration, runner token handling, or secret storage. Product repos must add those as separate explicit workflows if they want them.

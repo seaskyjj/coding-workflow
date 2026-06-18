@@ -67,11 +67,40 @@ THEN inspect THIS repo and do the following, opening ONE pull request (do not pu
    - if the local reviewer CLI selected in step 4 is available and logged in, run the local review command once after opening the PR; if it is unavailable, report that explicitly instead of fabricating review status.
    - for ADRs, design docs, investigations, and next-step direction docs, run a proposal review once with `REVIEW_KIND=proposal`; for mixed code+proposal PRs, run both review kinds.
 
+OPTIONAL CI/CD + staging-deploy adoption, only if explicitly requested:
+
+7. `.coding-workflow/local-gates.json` — start from `templates/consumer-local-gates.json` and tailor real local gate profiles for THIS repo.
+   - product repos own commands, env names, coverage mapping, and profile ids;
+   - missing env may produce skipped/partial evidence, never covered/passed evidence;
+   - local gate evidence is not hosted CI passing unless the product repo explicitly proves equivalent coverage.
+
+8. `.coding-workflow/deploy.staging.json` — start from `templates/consumer-deploy-staging.json` and tailor real staging target config.
+   - use real target host alias, repo root, service ids, health URL, smoke command, audit path, and log paths;
+   - choose explicit `healthAttempts`, `healthIntervalSeconds`, `logExcerptLines`, and any SSH timeout settings;
+   - do not write secrets, signed URLs, or tokens into config;
+   - keep production promotion out of scope unless the human explicitly requests a separate production workflow.
+
+9. Add portable wrappers only if useful:
+   ```bash
+   CODING_WORKFLOW="${CODING_WORKFLOW:-$HOME/Programs/coding-workflow}"
+   node "$CODING_WORKFLOW/scripts/local-pr-gate.mjs" --profile docs --config .coding-workflow/local-gates.json
+   node "$CODING_WORKFLOW/scripts/deploy-remote-staging.mjs" --config .coding-workflow/deploy.staging.json --target TARGET --ref REF_OR_SHA --dry-run
+   ```
+   Do not hardcode `/Users/.../coding-workflow`.
+
+10. Validate CI/CD adoption:
+   - run at least one local gate profile and report `passed` / `partial` / `failed` honestly;
+   - run `service-manager-plan.mjs` against the staging config;
+   - run `deploy-remote-staging.mjs --dry-run` first;
+   - use `ci-diagnose-pr.mjs` before recommending local fallback;
+   - generate `self-hosted-runner-plan.mjs` output only when diagnostics show repeated hosted-runner unavailability and local gate JSON contains machine-checkable coverage gaps.
+
 FINALLY, tell the human the prerequisites only THEY can do (you cannot): 
    (a) enable the repo setting "Automatically delete head branches"; 
    (b) add CODING_WORKFLOW_TOKEN if the tooling repo is private, or make it public;
    (c) run `codex login` or `claude` login on any local/self-hosted runner used for subscription CLI review;
    (d) only add ANTHROPIC_API_KEY / ANTHROPIC_MODEL later if the team explicitly opts back into metered API AI review.
+   (e) confirm staging host access, service-manager persistence, and any GitHub runner registration token if CI/CD adoption is requested.
 
-Boundaries: do not embed/vendor the tooling; do not implement auto-merge; do not write secrets into the repo; do not fabricate passing status or data; the non-AI gate is the real safety net and must run independently of any AI.
+Boundaries: do not embed/vendor the tooling; do not implement auto-merge; do not write secrets into the repo; do not fabricate passing status or data; do not auto-promote production; do not auto-register runners or store runner tokens; the non-AI gate is the real safety net and must run independently of any AI.
 ````

@@ -33,6 +33,8 @@ assert.ok(!redact('aws key AKIAABCDEFGHIJKLMNOP here').includes('AKIAABCDEFGHIJK
 assert.ok(!redact('aws_secret_key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY').includes('wJalrXUtnFEMI'));
 assert.ok(!redact('jwt eyJabcdefghiJKL.eyJmnopqrstuvwxyz.ABCDEFGHIJKLMNOP').includes('eyJabcdefghiJKL'));
 assert.ok(!redact('https://example.test/files/abcdefghijklmnopqrstuvwxyzABCDEF/download').includes('abcdefghijklmnopqrstuvwxyzABCDEF'));
+assert.ok(!redact('https://example.test/files/abcdefghijklmnopqrstuvwxyzABCDEF\nnext').includes('abcdefghijklmnopqrstuvwxyzABCDEF'));
+assert.ok(!redact('see https://example.test/files/abcdefghijklmnopqrstuvwxyzABCDEF here').includes('abcdefghijklmnopqrstuvwxyzABCDEF'));
 
 // Local gate: missing env on a required step produces partial/skipped, not pass.
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'coding-workflow-cicd-test-'));

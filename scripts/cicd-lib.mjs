@@ -87,9 +87,10 @@ const AUTH_HEADER_RE = /\b(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s'",;]+/
 const QUERY_SECRET_RE = /([?&](?:token|secret|password|passwd|api[_-]?key|access[_-]?key|signature|sig|x-amz-signature|credential|expires)=)[^&\s]+/gi;
 const GITHUB_TOKEN_RE = /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g;
 const AWS_ACCESS_KEY_RE = /\b(AKIA|ASIA)[A-Z0-9]{16}\b/g;
+// Label-gated on purpose: a value-only 40-char base64 matcher would redact ordinary hashes/ids.
 const AWS_SECRET_KEY_LABEL_RE = /\b([A-Za-z0-9_./-]*(?:AWS)?[A-Za-z0-9_./-]*SECRET[A-Za-z0-9_./-]*(?:ACCESS)?[A-Za-z0-9_./-]*KEY[A-Za-z0-9_./-]*)(\s*[:=]?\s+)([A-Za-z0-9/+=]{40})\b/gi;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
-const URL_PATH_TOKEN_RE = /(https?:\/\/[^?\s'"<>`]+\/)([A-Za-z0-9_-]{24,})(?=\/|$)/g;
+const URL_PATH_TOKEN_RE = /(https?:\/\/[^?\s'"<>`]+\/)([A-Za-z0-9_-]{24,})(?=[/\s'"<>`]|$)/g;
 
 export function redact(value) {
   if (value == null) return value;

@@ -26,10 +26,19 @@ function assertDocumentedFile(text, relPath, skillPath) {
   assertFileExists(relPath);
 }
 
+function assertDocumentedInterface(skillText, implementationText, token, skillPath, implementationPath) {
+  assertIncludes(skillText, token, skillPath);
+  assertIncludes(implementationText, token, implementationPath);
+}
+
 const prReviewSkillPath = 'skills/coding-workflow-pr-review/SKILL.md';
 const cicdDeploySkillPath = 'skills/coding-workflow-cicd-deploy/SKILL.md';
+const aiReviewPath = 'scripts/ai-review.mjs';
+const reviewerOutputSchemaPath = 'scripts/reviewer-output.schema.json';
 const prReviewSkill = readRequired(prReviewSkillPath);
 const cicdDeploySkill = readRequired(cicdDeploySkillPath);
+const aiReview = readRequired(aiReviewPath);
+const reviewerOutputSchema = readRequired(reviewerOutputSchemaPath);
 const readme = readRequired('README.md');
 
 assertIncludes(prReviewSkill, 'name: coding-workflow-pr-review', prReviewSkillPath);
@@ -41,18 +50,27 @@ for (const relPath of [
   'reviewer/PROPOSAL-CHECKLIST.md',
   'templates/consumer-ci.yml',
   'templates/consumer-ai-review.yml',
-  'scripts/ai-review.mjs',
+  aiReviewPath,
 ]) {
   assertDocumentedFile(prReviewSkill, relPath, prReviewSkillPath);
 }
-assertIncludes(prReviewSkill, 'REVIEW_BACKEND', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'codex-cli', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'claude-cli', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'REVIEW_KIND', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'Use `proposal` for ADRs, design docs, investigation write-ups, methodology, knowledge, or next-step direction content.', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'REVIEWER_OVERLAY', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'PR_LOG_PATH', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'fail closed with `needs_human` rather than approving partial context.', prReviewSkillPath);
+for (const token of [
+  'REVIEW_BACKEND',
+  '--backend',
+  'codex-cli',
+  'claude-cli',
+  'REVIEW_KIND',
+  '--review-kind',
+  'REVIEWER_OVERLAY',
+  'PR_LOG_PATH',
+]) {
+  assertDocumentedInterface(prReviewSkill, aiReview, token, prReviewSkillPath, aiReviewPath);
+}
+assertIncludes(prReviewSkill, 'REVIEW_KIND="${REVIEW_KIND:-code}"', prReviewSkillPath);
+assertIncludes(prReviewSkill, '- Use `proposal`', prReviewSkillPath);
+assertIncludes(aiReview, "['code', 'proposal']", aiReviewPath);
+assertIncludes(prReviewSkill, 'fail closed with `needs_human`', prReviewSkillPath);
+assertIncludes(reviewerOutputSchema, '"needs_human"', reviewerOutputSchemaPath);
 
 assertIncludes(cicdDeploySkill, 'name: coding-workflow-cicd-deploy', cicdDeploySkillPath);
 assertIncludes(cicdDeploySkill, 'service-manager plans', cicdDeploySkillPath);

@@ -28,6 +28,7 @@ It exists because process/orchestration tooling is cross-project and should not 
 | `templates/consumer-deploy-staging.json` | Product-owned remote staging deploy config template with explicit health retry/log excerpt settings. |
 | `templates/consumer-self-hosted-runner-plan.md` | Inputs and boundaries for self-hosted runner planning. |
 | `templates/consumer-cicd-adoption-prompt.md` | Copy-paste prompt for adopting the CI/CD and staging-deploy extension in a product repo. |
+| `skills/coding-workflow-pr-review/SKILL.md` | Thin Codex skill template for adopting this workflow in product repos and running local independent code/proposal PR review through this repo's scripts. |
 | `skills/coding-workflow-cicd-deploy/SKILL.md` | Thin Codex skill template that delegates CI/CD and staging-deploy operations to this repo's docs/scripts. |
 | `CICD-DEPLOY-WORKFLOW-PROPOSAL.md` | Implemented design record for the CI/CD and staging-deploy extension; cross-product reuse validation is still pending. |
 | `BOOTSTRAP.md` | How to adopt this in a new or existing product repo. |

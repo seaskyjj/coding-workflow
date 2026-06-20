@@ -16,6 +16,16 @@ function assertIncludes(text, needle, relPath) {
   assert.ok(text.includes(needle), `${relPath} must include ${needle}`);
 }
 
+function assertFileExists(relPath) {
+  const fullPath = path.join(repoRoot, relPath);
+  assert.equal(existsSync(fullPath), true, `${relPath} must exist`);
+}
+
+function assertDocumentedFile(text, relPath, skillPath) {
+  assertIncludes(text, relPath, skillPath);
+  assertFileExists(relPath);
+}
+
 const prReviewSkillPath = 'skills/coding-workflow-pr-review/SKILL.md';
 const cicdDeploySkillPath = 'skills/coding-workflow-cicd-deploy/SKILL.md';
 const prReviewSkill = readRequired(prReviewSkillPath);
@@ -23,31 +33,41 @@ const cicdDeploySkill = readRequired(cicdDeploySkillPath);
 const readme = readRequired('README.md');
 
 assertIncludes(prReviewSkill, 'name: coding-workflow-pr-review', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'WORKFLOW.md', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'BOOTSTRAP.md', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'ADOPT-PROMPT.md', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'reviewer/CHECKLIST.md', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'reviewer/PROPOSAL-CHECKLIST.md', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'templates/consumer-ci.yml', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'templates/consumer-ai-review.yml', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'scripts/ai-review.mjs', prReviewSkillPath);
+for (const relPath of [
+  'WORKFLOW.md',
+  'BOOTSTRAP.md',
+  'ADOPT-PROMPT.md',
+  'reviewer/CHECKLIST.md',
+  'reviewer/PROPOSAL-CHECKLIST.md',
+  'templates/consumer-ci.yml',
+  'templates/consumer-ai-review.yml',
+  'scripts/ai-review.mjs',
+]) {
+  assertDocumentedFile(prReviewSkill, relPath, prReviewSkillPath);
+}
 assertIncludes(prReviewSkill, 'REVIEW_BACKEND', prReviewSkillPath);
 assertIncludes(prReviewSkill, 'codex-cli', prReviewSkillPath);
 assertIncludes(prReviewSkill, 'claude-cli', prReviewSkillPath);
 assertIncludes(prReviewSkill, 'REVIEW_KIND', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'proposal', prReviewSkillPath);
+assertIncludes(prReviewSkill, 'Use `proposal` for ADRs, design docs, investigation write-ups, methodology, knowledge, or next-step direction content.', prReviewSkillPath);
 assertIncludes(prReviewSkill, 'REVIEWER_OVERLAY', prReviewSkillPath);
 assertIncludes(prReviewSkill, 'PR_LOG_PATH', prReviewSkillPath);
-assertIncludes(prReviewSkill, 'needs_human', prReviewSkillPath);
+assertIncludes(prReviewSkill, 'fail closed with `needs_human` rather than approving partial context.', prReviewSkillPath);
 
 assertIncludes(cicdDeploySkill, 'name: coding-workflow-cicd-deploy', cicdDeploySkillPath);
 assertIncludes(cicdDeploySkill, 'service-manager plans', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'local-pr-gate.mjs', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'ci-diagnose-pr.mjs', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'deploy-remote-staging.mjs', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'self-hosted-runner-plan.mjs', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'consumer-local-gates.json', cicdDeploySkillPath);
-assertIncludes(cicdDeploySkill, 'consumer-deploy-staging.json', cicdDeploySkillPath);
+for (const relPath of [
+  'templates/consumer-local-gates.json',
+  'templates/consumer-deploy-staging.json',
+  'scripts/local-pr-gate.mjs',
+  'scripts/ci-diagnose-pr.mjs',
+  'scripts/deploy-remote-staging.mjs',
+  'scripts/self-hosted-runner-plan.mjs',
+]) {
+  assertDocumentedFile(cicdDeploySkill, relPath, cicdDeploySkillPath);
+}
+assertFileExists('scripts/service-manager-plan.mjs');
+assertFileExists('templates/consumer-self-hosted-runner-plan.md');
 
 assertIncludes(readme, prReviewSkillPath, 'README.md');
 assertIncludes(readme, cicdDeploySkillPath, 'README.md');
